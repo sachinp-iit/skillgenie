@@ -1,11 +1,3 @@
-## ============================================================================
-## Project      : SkillGenie
-## Description  : Autonomous Capability Discovery & Evolution Library for
-##                Agentic AI
-## Author       : Sachin Pate
-## License      : MIT
-## ============================================================================
-
 # 🧞 SkillGenie
 
 > **Autonomous Capability Discovery, Learning, Evolution & Recommendation Framework for Agentic AI**
