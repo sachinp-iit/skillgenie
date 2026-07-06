@@ -1,28 +1,28 @@
 # 🧞 SkillGenie
 
-> **Autonomous Capability Discovery, Learning, Evolution & Recommendation Framework for Agentic AI**
+> **Autonomous Skill Discovery, Learning, Evolution & Recommendation Framework for Agentic AI**
 
-SkillGenie is an open-source Python library that enables AI agents to automatically learn reusable capabilities from execution traces, evaluate them, recommend them for future tasks, monitor their health, and continuously evolve over time.
+SkillGenie is an open-source Python library that enables AI agents to automatically discover, learn, evolve, recommend, and manage reusable skills from execution traces.
 
-Instead of manually creating workflows, SkillGenie observes successful executions and converts them into reusable capabilities that improve future agent performance.
+Instead of manually hardcoding workflows, SkillGenie continuously learns from successful executions and builds a reusable skill library that improves future agent performance.
 
 ---
 
 # Features
 
-- Autonomous Capability Discovery
-- Execution Trace Learning
-- Capability Recommendation
-- Capability Lifecycle Management
-- Confidence & Quality Scoring
-- Capability Evolution
-- Capability Health Monitoring
-- Relationship Graph
+- Autonomous Skill Discovery
+- Skill Learning from Execution Traces
+- Skill Recommendation
+- Skill Lifecycle Management
+- Skill Confidence & Quality Scoring
+- Skill Evolution
+- Skill Health Monitoring
+- Skill Relationship Graph
+- Human Approval Workflow
+- Semantic Search
 - PostgreSQL + pgvector Support
 - Framework Agnostic
-- Human Approval Workflow
-- Versioning
-- Semantic Search
+- Version Management
 
 ---
 
@@ -30,13 +30,28 @@ Instead of manually creating workflows, SkillGenie observes successful execution
 
 - LangGraph
 - LangChain
+- LlamaIndex
+- Haystack
 - CrewAI
 - AutoGen
-- Haystack
-- LlamaIndex
 - Microsoft Semantic Kernel
 - PydanticAI
 - Custom Agent Frameworks
+
+---
+
+# Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.11+ |
+| Database | PostgreSQL |
+| Vector Database | pgvector |
+| ORM | SQLAlchemy 2.x |
+| Validation | Pydantic v2 |
+| Configuration | JSON + .env |
+| Logging | Loguru |
+| Serialization | orjson |
 
 ---
 
@@ -50,21 +65,21 @@ git clone git@github.com:sachinp-iit/skillgenie.git
 cd skillgenie
 ```
 
-Create virtual environment.
+Create a virtual environment.
 
 ```bash
 python -m venv .venv
 ```
 
-Activate virtual environment.
+Activate the virtual environment.
 
-Windows
+### Windows
 
 ```bash
 .venv\Scripts\activate
 ```
 
-Linux / macOS
+### Linux / macOS
 
 ```bash
 source .venv/bin/activate
@@ -74,6 +89,12 @@ Install dependencies.
 
 ```bash
 pip install -r requirements.txt
+```
+
+Install SkillGenie in editable mode.
+
+```bash
+pip install -e .
 ```
 
 ---
@@ -92,11 +113,12 @@ to
 .env
 ```
 
-Update
+Update the following values:
 
-- PostgreSQL
+- PostgreSQL Connection
 - Embedding Model
 - OpenRouter API Key
+- Learning Thresholds
 
 ---
 
@@ -106,29 +128,96 @@ Update
 skillgenie/
 │
 ├── skillgenie/
+│   ├── config.py
+│   ├── constants.py
+│   ├── exceptions.py
+│   ├── database/
+│   │   ├── connection.py
+│   │   ├── session.py
+│   │   ├── manager.py
+│   │   ├── bootstrap.py
+│   │   ├── migrations.py
+│   │   ├── repositories/
+│   │   │   ├── base_repository.py
+│   │   │   ├── capability_repository.py
+│   │   │   ├── trace_repository.py
+│   │   │   ├── metrics_repository.py
+│   │   │   ├── audit_repository.py
+│   │   │   └── __init__.py
+│   │   └── sql/
+│   │       ├── create_tables.py
+│   │       ├── indexes.py
+│   │       └── __init__.py
+│   ├── models/
+│   │   ├── capability.py
+│   │   ├── execution.py
+│   │   ├── metrics.py
+│   │   ├── recommendation.py
+│   │   ├── trace.py
+│   │   └── __init__.py
+│   ├── utils/
+│   │   └── logger.py
+│   └── __init__.py
+│
 ├── config/
 ├── docs/
 ├── examples/
 ├── tests/
-├── requirements.txt
+├── LICENSE
 ├── pyproject.toml
+├── requirements.txt
+├── requirements.lock.txt
 └── README.md
 ```
 
 ---
 
-# Roadmap
+# Current Progress
 
-- Capability Discovery
-- Capability Recommendation
-- Capability Evolution
-- Capability Registry
-- Capability Health Monitoring
-- Capability Lifecycle
+## Completed
+
+- Project Structure
+- Configuration Management
+- Constants
+- Exception Handling
+- Logging
+- PostgreSQL Integration
+- Database Connection Manager
+- Database Session Manager
+- Database Bootstrap
+- Database Migration
+- Database Schema Creation
+- Database Indexes
+- Repository Layer
+- Pydantic Models
+
+## In Progress
+
+- Core Engine
+- Skill Learning Engine
+- Skill Recommendation Engine
+- Embedding Engine
+- Skill Relationship Graph
+
+## Planned
+
+- Automatic Skill Generation
+- Skill Evolution Engine
+- Skill Evaluation Engine
+- Skill Registry
 - Admin Dashboard
-- Human Approval Workflow
+- Monitoring Dashboard
 - Framework Integrations
-- Enterprise Features
+- REST API
+- CLI Support
+
+---
+
+# Vision
+
+Build the world's most advanced autonomous skill learning framework for Agentic AI.
+
+SkillGenie enables AI agents to continuously learn from experience, discover reusable skills, evaluate their effectiveness, recommend the best skills for future tasks, and improve autonomously over time.
 
 ---
 
@@ -146,10 +235,4 @@ MIT License
 
 # Contributing
 
-Contributions, issues, feature requests, and ideas are welcome.
-
----
-
-# Vision
-
-> Build the world's first autonomous capability operating system for AI agents.
+Contributions, issues, feature requests, and pull requests are welcome.
