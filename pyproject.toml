@@ -1,0 +1,72 @@
+# ============================================================================
+# Project      : SkillGenie
+# File         : pyproject.toml
+# Description  : Python package configuration for SkillGenie.
+# Author       : Sachin Pate
+# License      : MIT
+# ============================================================================
+
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skillgenie"
+version = "0.1.0"
+description = "Autonomous capability discovery, evolution and recommendation library for Agentic AI."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+authors = [
+    { name = "<Your Name>", email = "<your@email.com>" }
+]
+
+keywords = [
+    "agentic-ai",
+    "llm",
+    "agents",
+    "autonomous-agents",
+    "capability-learning",
+    "automation",
+    "skills",
+    "learning"
+]
+
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3.5",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "sentence-transformers>=3.0",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "orjson>=3.10",
+    "loguru>=0.7"
+]
+
+[project.optional-dependencies]
+
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy"
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["skillgenie*"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
