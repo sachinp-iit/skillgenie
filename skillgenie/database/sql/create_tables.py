@@ -16,10 +16,10 @@
 
 from sqlalchemy import text
 
-from skillgenie.database import Database
+from skillgenie.database.manager import DatabaseManager
 
 
-def create_tables(database: Database) -> None:
+def create_tables(database: DatabaseManager) -> None:
     """
     Creates all SkillGenie database tables.
     """

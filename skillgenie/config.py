@@ -2,7 +2,8 @@
 # Project      : SkillGenie
 # File         : config.py
 # Description  : Loads configuration from JSON with environment variable
-#                overrides. Used across the SkillGenie library.
+#                overrides.
+#
 # Author       : Sachin Pate
 # License      : MIT
 # ============================================================================
@@ -19,21 +20,31 @@ load_dotenv()
 
 
 class Config:
-    """Configuration loader."""
+    """
+    Configuration loader.
+    """
 
     def __init__(self, config_file: str = "config/config.json") -> None:
+        """
+        Initialize configuration.
 
-        # Store config path
+        Args:
+            config_file: Path to configuration JSON.
+        """
+
+        # Store configuration file path
         self._config_file = Path(config_file)
 
-        # Internal config dictionary
+        # Internal configuration dictionary
         self._config: dict[str, Any] = {}
 
         # Load configuration
         self._load()
 
     def _load(self) -> None:
-        """Load JSON configuration."""
+        """
+        Load configuration from JSON file.
+        """
 
         if not self._config_file.exists():
             raise FileNotFoundError(
@@ -45,20 +56,28 @@ class Config:
 
     def get(self, key: str, default: Any = None) -> Any:
         """
-        Get configuration value.
+        Returns configuration value.
+
+        Priority:
+            1. Environment Variable
+            2. config.json
+            3. Default Value
 
         Example:
             config.get("database.url")
         """
 
-        # Environment variable has highest priority
+        # Convert nested key into environment variable
         env_key = key.upper().replace(".", "_")
 
-        if env_key in os.environ:
-            return os.environ[env_key]
+        # Environment variables have highest priority
+        env_value = os.getenv(env_key)
 
-        # Read nested JSON keys
-        value = self._config
+        if env_value is not None:
+            return env_value
+
+        # Read nested JSON
+        value: Any = self._config
 
         for part in key.split("."):
 
@@ -73,6 +92,8 @@ class Config:
         return value
 
     def reload(self) -> None:
-        """Reload configuration from disk."""
+        """
+        Reload configuration from disk.
+        """
 
         self._load()
