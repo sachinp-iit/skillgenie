@@ -8,6 +8,11 @@
 # License      : MIT
 # ============================================================================
 
+from __future__ import annotations
+
+from math import sqrt
+from typing import Any
+
 from skillgenie.config import Config
 from skillgenie.utils.logger import Logger
 
@@ -25,57 +30,28 @@ class SkillScorer:
             config: SkillGenie configuration.
         """
 
-        # Store configuration
         self._config = config
-
-        # Initialize logger
         self._logger = Logger(config).log
 
-    def confidence_score(self, skill) -> float:
+    def confidence_score(self, skill: Any) -> float:
         """
         Calculate confidence score.
-
-        Args:
-            skill: Skill object.
-
-        Returns:
-            Confidence score.
         """
 
         self._logger.debug(
-            f"Calculating confidence score for '{skill.name}'."
+            "Calculating confidence score."
         )
-
-        # TODO:
-        # Consider:
-        # - Successful executions
-        # - Failure rate
-        # - Number of observations
-        # - Stability
 
         return 0.0
 
-    def quality_score(self, skill) -> float:
+    def quality_score(self, skill: Any) -> float:
         """
         Calculate quality score.
-
-        Args:
-            skill: Skill object.
-
-        Returns:
-            Quality score.
         """
 
         self._logger.debug(
-            f"Calculating quality score for '{skill.name}'."
+            "Calculating quality score."
         )
-
-        # TODO:
-        # Consider:
-        # - Output quality
-        # - Human feedback
-        # - Reusability
-        # - Generalization
 
         return 0.0
 
@@ -85,44 +61,52 @@ class SkillScorer:
         target_embedding: list[float],
     ) -> float:
         """
-        Calculate embedding similarity.
-
-        Args:
-            source_embedding: Query embedding.
-            target_embedding: Stored embedding.
-
-        Returns:
-            Similarity score.
+        Calculate cosine similarity between two embeddings.
         """
 
         self._logger.debug(
             "Calculating similarity score."
         )
 
-        # TODO:
-        # Cosine similarity
+        if not source_embedding or not target_embedding:
+            return 0.0
 
-        return 0.0
+        if len(source_embedding) != len(target_embedding):
+            raise ValueError(
+                "Embedding dimensions must match."
+            )
 
-    def overall_score(self, skill) -> float:
+        dot_product = sum(
+            x * y
+            for x, y in zip(
+                source_embedding,
+                target_embedding,
+            )
+        )
+
+        source_norm = sqrt(
+            sum(x * x for x in source_embedding)
+        )
+
+        target_norm = sqrt(
+            sum(y * y for y in target_embedding)
+        )
+
+        if source_norm == 0.0 or target_norm == 0.0:
+            return 0.0
+
+        return dot_product / (source_norm * target_norm)
+
+    def overall_score(self, skill: Any) -> float:
         """
         Calculate overall score.
-
-        Args:
-            skill: Skill object.
-
-        Returns:
-            Overall score.
         """
 
         self._logger.debug(
-            f"Calculating overall score for '{skill.name}'."
+            "Calculating overall score."
         )
 
         confidence = self.confidence_score(skill)
-
         quality = self.quality_score(skill)
 
-        overall = (confidence + quality) / 2
-
-        return overall
+        return (confidence + quality) / 2.0
