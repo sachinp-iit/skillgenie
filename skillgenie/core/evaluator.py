@@ -202,3 +202,104 @@ class SkillEvaluator:
 
         # Metrics repository implementation will be
         # integrated after the scoring engine is completed.
+        
+    def approve(
+        self,
+        skill: Capability,
+    ) -> Capability:
+        """
+        Approve a skill.
+
+        Args:
+            skill: Skill to approve.
+
+        Returns:
+            Updated skill.
+        """
+
+        self._logger.info(
+            f"Approving skill '{skill.name}'."
+        )
+
+        skill.status = self._determine_status(skill)
+
+        self._skill_repository.update(
+            capability_id=skill.id,
+            status=skill.status.value,
+        )
+
+        return skill
+
+    def reject(
+        self,
+        skill: Capability,
+        reason: str,
+    ) -> Capability:
+        """
+        Reject a generated skill.
+
+        Args:
+            skill: Skill to reject.
+            reason: Rejection reason.
+
+        Returns:
+            Updated skill.
+        """
+
+        self._logger.warning(
+            f"Rejecting skill '{skill.name}'."
+        )
+
+        skill.metadata["rejection_reason"] = reason
+
+        self._skill_repository.update(
+            capability_id=skill.id,
+            metadata=skill.metadata,
+        )
+
+        return skill
+
+    def publish(
+        self,
+        skill: Capability,
+    ) -> Capability:
+        """
+        Publish a skill.
+
+        Args:
+            skill: Skill to publish.
+
+        Returns:
+            Published skill.
+        """
+
+        self._logger.info(
+            f"Publishing skill '{skill.name}'."
+        )
+
+        self._skill_repository.update(
+            capability_id=skill.id,
+            status=skill.status.value,
+        )
+
+        return skill
+
+    def reevaluate(
+        self,
+        skill: Capability,
+    ) -> Capability:
+        """
+        Re-evaluate an existing skill.
+
+        Args:
+            skill: Existing skill.
+
+        Returns:
+            Updated skill.
+        """
+
+        self._logger.info(
+            f"Re-evaluating skill '{skill.name}'."
+        )
+
+        return self.evaluate(skill)
