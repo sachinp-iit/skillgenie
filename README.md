@@ -12,6 +12,8 @@ Instead of manually hardcoding workflows, SkillGenie continuously learns from su
 
 - Autonomous Skill Discovery
 - Skill Learning from Execution Traces
+- Skill Generation
+- Skill Evaluation
 - Skill Recommendation
 - Skill Lifecycle Management
 - Skill Confidence & Quality Scoring
@@ -49,7 +51,7 @@ Instead of manually hardcoding workflows, SkillGenie continuously learns from su
 | Vector Database | pgvector |
 | ORM | SQLAlchemy 2.x |
 | Validation | Pydantic v2 |
-| Configuration | JSON + .env |
+| Configuration | JSON + Environment Variables |
 | Logging | Loguru |
 | Serialization | orjson |
 
@@ -128,9 +130,15 @@ Update the following values:
 skillgenie/
 │
 ├── skillgenie/
-│   ├── config.py
-│   ├── constants.py
-│   ├── exceptions.py
+│   ├── core/
+│   │   ├── engine.py
+│   │   ├── learner.py
+│   │   ├── evaluator.py
+│   │   ├── recommender.py
+│   │   ├── scorer.py
+│   │   ├── lifecycle.py
+│   │   └── __init__.py
+│   │
 │   ├── database/
 │   │   ├── connection.py
 │   │   ├── session.py
@@ -148,6 +156,7 @@ skillgenie/
 │   │       ├── create_tables.py
 │   │       ├── indexes.py
 │   │       └── __init__.py
+│   │
 │   ├── models/
 │   │   ├── capability.py
 │   │   ├── execution.py
@@ -155,8 +164,24 @@ skillgenie/
 │   │   ├── recommendation.py
 │   │   ├── trace.py
 │   │   └── __init__.py
+│   │
+│   ├── tracing/
+│   │   ├── parser.py
+│   │   ├── workflow_extractor.py
+│   │   ├── tool_extractor.py
+│   │   ├── prompt_extractor.py
+│   │   ├── input_output_extractor.py
+│   │   ├── skill_generator.py
+│   │   ├── duplicate_detector.py
+│   │   └── __init__.py
+│   │
 │   ├── utils/
-│   │   └── logger.py
+│   │   ├── logger.py
+│   │   └── __init__.py
+│   │
+│   ├── config.py
+│   ├── constants.py
+│   ├── exceptions.py
 │   └── __init__.py
 │
 ├── config/
@@ -176,11 +201,16 @@ skillgenie/
 
 ## Completed
 
+### Foundation
+
 - Project Structure
 - Configuration Management
 - Constants
 - Exception Handling
 - Logging
+
+### Database
+
 - PostgreSQL Integration
 - Database Connection Manager
 - Database Session Manager
@@ -189,27 +219,70 @@ skillgenie/
 - Database Schema Creation
 - Database Indexes
 - Repository Layer
-- Pydantic Models
+
+### Models
+
+- Skill Model
+- Trace Model
+- Execution Model
+- Metrics Model
+- Recommendation Model
+
+### Trace Processing
+
+- Trace Parser
+- Workflow Extractor
+- Tool Extractor
+- Prompt Extractor
+- Input / Output Extractor
+- Skill Generator
+- Duplicate Detector
+
+---
 
 ## In Progress
 
-- Core Engine
-- Skill Learning Engine
-- Skill Recommendation Engine
-- Embedding Engine
-- Skill Relationship Graph
+### Core Engine
+
+- Engine
+- Skill Learner
+- Skill Evaluator
+- Skill Recommender
+- Skill Scorer
+- Skill Lifecycle Manager
+
+---
 
 ## Planned
 
-- Automatic Skill Generation
-- Skill Evolution Engine
-- Skill Evaluation Engine
+- Embedding Engine
+- Relationship Graph
 - Skill Registry
-- Admin Dashboard
-- Monitoring Dashboard
-- Framework Integrations
+- Skill Evolution Engine
+- Skill Health Engine
+- Framework Adapters
+- CLI
 - REST API
-- CLI Support
+- Monitoring Dashboard
+- Admin Dashboard
+- Comprehensive Test Suite
+
+---
+
+# Development Status
+
+Current Phase:
+
+**Core Engine Development**
+
+Next Milestones:
+
+1. Complete Core Module
+2. Build Embedding Engine
+3. Build Relationship Graph
+4. Implement Recommendation Pipeline
+5. Framework Integrations
+6. Production Release (v0.1.0)
 
 ---
 
