@@ -88,3 +88,34 @@ class RejectRequest(BaseModel):
     """
 
     reason: str = ""
+
+
+class OutcomeCreate(BaseModel):
+    """
+    Recommendation outcome feedback payload.
+    """
+
+    capability_id: str
+    outcome: str = "SUCCESS"
+    recommendation_id: str | None = None
+    latency_ms: float = 0.0
+    rating: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SecretSet(BaseModel):
+    """
+    Vault secret payload.
+    """
+
+    name: str
+    value: str
+
+
+class ExportRequest(BaseModel):
+    """
+    Skill export payload.
+    """
+
+    skill_id: str
+    format: str = "mcp"

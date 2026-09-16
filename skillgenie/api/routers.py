@@ -17,8 +17,10 @@ from skillgenie.api.dependencies import get_engine
 from skillgenie.api.schemas import (
     ExecutionCreate,
     LearnRequest,
+    OutcomeCreate,
     RecommendRequest,
     RejectRequest,
+    SecretSet,
     SkillUpdate,
     TraceCreate,
 )
@@ -549,6 +551,15 @@ def monitor_overview(engine: SkillGenie = Depends(get_engine)):
     return engine.health_overview()
 
 
+@router.get("/monitor/governance")
+def governance_status(engine: SkillGenie = Depends(get_engine)):
+    """
+    Governance and privacy compliance summary.
+    """
+
+    return engine.governance_report()
+
+
 @router.get("/admin/overview")
 def admin_overview(engine: SkillGenie = Depends(get_engine)):
     """
@@ -587,3 +598,145 @@ def admin_overview(engine: SkillGenie = Depends(get_engine)):
             ]
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Feedback Loop & Drift
+# ---------------------------------------------------------------------------
+
+
+@router.post("/outcomes", status_code=201)
+def record_outcome(
+    payload: OutcomeCreate,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Record a real-world outcome for a recommendation.
+    """
+
+    try:
+        outcome = engine.record_outcome(
+            capability_id=UUID(payload.capability_id),
+            outcome=payload.outcome,
+            recommendation_id=(
+                UUID(payload.recommendation_id)
+                if payload.recommendation_id
+                else None
+            ),
+            latency_ms=payload.latency_ms,
+            rating=payload.rating,
+            metadata=payload.metadata,
+        )
+    except SkillGenieError as exc:
+        raise _error(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "id": str(outcome.id),
+        "capability_id": str(outcome.capability_id),
+        "outcome": outcome.outcome,
+        "latency_ms": outcome.latency_ms,
+        "rating": outcome.rating,
+        "created_at": outcome.created_at.isoformat(),
+    }
+
+
+@router.get("/outcomes")
+def list_outcomes(limit: int = 50, engine: SkillGenie = Depends(get_engine)):
+    """
+    List recent recommendation outcomes.
+    """
+
+    return [dict(row) for row in engine.outcomes.list(limit=limit)]
+
+
+@router.get("/skills/{skill_id}/drift")
+def skill_drift(skill_id: str, engine: SkillGenie = Depends(get_engine)):
+    """
+    Detect performance drift for a skill.
+    """
+
+    drift = engine.detect_drift(UUID(skill_id))
+
+    if drift is None:
+        return {"capability_id": skill_id, "drift_detected": False}
+
+    return {"capability_id": skill_id, "drift_detected": True, **drift}
+
+
+@router.get("/skills/{skill_id}/failures")
+def skill_failures(
+    skill_id: str,
+    limit: int = 20,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Recent failures for a skill.
+    """
+
+    return engine.recent_failures(UUID(skill_id), limit=limit)
+
+
+@router.get("/skills/{skill_id}/health/explain")
+def skill_health_explanation(
+    skill_id: str,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Explainable health breakdown for a skill.
+    """
+
+    try:
+        explanation = engine.health_explanation(UUID(skill_id))
+    except SkillGenieError as exc:
+        raise _error(exc)
+
+    return explanation
+
+
+# ---------------------------------------------------------------------------
+# MCP Export & Governance
+# ---------------------------------------------------------------------------
+
+
+@router.get("/export/{skill_id}")
+def export_skill(
+    skill_id: str,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Export a skill as a standalone MCP tool definition.
+    """
+
+    from skillgenie.mcp.server import SkillGenieMCPServer
+
+    try:
+        return SkillGenieMCPServer(engine=engine)._export(
+            {"skill_id": skill_id}
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/governance/secrets", status_code=201)
+def set_secret(
+    payload: SecretSet,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Store a secret in the vault.
+    """
+
+    engine.governance.vault.set(payload.name, payload.value)
+
+    return {"name": payload.name, "stored": True}
+
+
+@router.get("/governance/secrets")
+def list_secrets(engine: SkillGenie = Depends(get_engine)):
+    """
+    List stored secret names.
+    """
+
+    return {"names": engine.governance.vault.list_names()}

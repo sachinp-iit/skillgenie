@@ -21,6 +21,7 @@ from skillgenie.core.evaluator import SkillEvaluator
 from skillgenie.core.evolution import SkillEvolutionEngine
 from skillgenie.core.execution_service import ExecutionService
 from skillgenie.core.health import SkillHealthEngine
+from skillgenie.core.feedback import SkillFeedbackService
 from skillgenie.core.learner import SkillLearner
 from skillgenie.core.lifecycle import SkillLifecycle
 from skillgenie.core.recommender import SkillRecommender
@@ -35,10 +36,13 @@ from skillgenie.database.repositories.execution_repository import (
     ExecutionRepository,
 )
 from skillgenie.database.repositories.metrics_repository import MetricsRepository
+from skillgenie.database.repositories.outcome_repository import OutcomeRepository
 from skillgenie.database.repositories.recommendation_repository import (
     RecommendationRepository,
 )
 from skillgenie.database.repositories.trace_repository import TraceRepository
+from skillgenie.exceptions import CapabilityNotFoundError
+from skillgenie.governance.manager import GovernanceManager
 from skillgenie.embeddings.factory import get_embedding_provider
 from skillgenie.graph.relationship_graph import SkillGraphBuilder
 from skillgenie.models.capability import Capability
@@ -95,6 +99,18 @@ class SkillGenie:
 
         # Recommendation repository
         self.recommendations = RecommendationRepository(self.database)
+
+        # Outcome repository (feedback loop)
+        self.outcomes = OutcomeRepository(self.database)
+
+        # Governance (privacy + secrets vault)
+        self.governance = GovernanceManager(
+            self.config,
+            vault_path=self.config.get(
+                "governance.vault.path",
+                "config/secrets",
+            ),
+        )
 
         # Embedding provider
         should_enable_embeddings = (
@@ -183,6 +199,14 @@ class SkillGenie:
             audit_repository=self.audit,
         )
 
+        self.feedback = SkillFeedbackService(
+            config=self.config,
+            database=self.database,
+            skill_repository=self.capabilities,
+            outcome_repository=self.outcomes,
+            audit_repository=self.audit,
+        )
+
         self.graph_builder = SkillGraphBuilder(
             config=self.config,
             store=self.store,
@@ -262,6 +286,72 @@ class SkillGenie:
             "health": self.evolution.health_snapshot(),
             "statuses": self._status_distribution(skills),
         }
+
+    def record_outcome(
+        self,
+        capability_id: UUID,
+        outcome: str = "SUCCESS",
+        recommendation_id: UUID | None = None,
+        latency_ms: float = 0.0,
+        rating: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        """
+        Record a real-world outcome for a recommendation.
+        """
+
+        return self.feedback.record_outcome(
+            capability_id=capability_id,
+            outcome=outcome,
+            recommendation_id=recommendation_id,
+            latency_ms=latency_ms,
+            rating=rating,
+            metadata=metadata,
+        )
+
+    def detect_drift(self, capability_id: UUID) -> dict[str, Any] | None:
+        """
+        Detect performance drift for a skill.
+        """
+
+        return self.feedback.detect_drift(capability_id)
+
+    def recent_failures(
+        self, capability_id: UUID, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """
+        Return recent failed outcomes for a skill.
+        """
+
+        return self.feedback.recent_failures(capability_id, limit=limit)
+
+    def health_explanation(self, skill_id: UUID) -> dict[str, Any]:
+        """
+        Explainable health breakdown for a skill.
+        """
+
+        skill = self.store.get(skill_id)
+
+        if skill is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_id}' does not exist."
+            )
+
+        return self.feedback.health_explanation(skill)
+
+    def governance_report(self) -> dict[str, Any]:
+        """
+        Governance and privacy compliance summary.
+        """
+
+        return self.governance.report()
+
+    def redact(self, value: Any) -> Any:
+        """
+        Redact PII from a value under governance policy.
+        """
+
+        return self.governance.redact(value)
 
     def shutdown(self) -> None:
         """

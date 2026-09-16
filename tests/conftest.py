@@ -332,6 +332,72 @@ class FakeRecommendationRepository:
         ]
 
 
+class FakeOutcomeRepository:
+    """In-memory stand-in for OutcomeRepository."""
+
+    def __init__(self) -> None:
+        self._outcomes: list[dict[str, Any]] = []
+
+    def create(
+        self,
+        outcome_id,
+        capability_id,
+        recommendation_id,
+        outcome,
+        latency_ms,
+        rating,
+        metadata,
+        created_at=None,
+    ) -> None:
+        self._outcomes.append(
+            {
+                "id": str(outcome_id),
+                "capability_id": str(capability_id),
+                "recommendation_id": (
+                    str(recommendation_id) if recommendation_id else None
+                ),
+                "outcome": outcome,
+                "latency_ms": latency_ms,
+                "rating": rating,
+                "metadata": copy.deepcopy(metadata),
+                "created_at": created_at or datetime.utcnow(),
+            }
+        )
+
+    def get_by_capability(self, capability_id):
+        return [
+            copy.deepcopy(row)
+            for row in self._outcomes
+            if row["capability_id"] == str(capability_id)
+        ]
+
+    def get_by_recommendation(self, recommendation_id):
+        return [
+            copy.deepcopy(row)
+            for row in self._outcomes
+            if row["recommendation_id"] == str(recommendation_id)
+        ]
+
+    def list(self, limit=50):
+        return [copy.deepcopy(row) for row in self._outcomes[:limit]]
+
+    def count_outcomes(self, capability_id, window_start=None):
+        rows = [
+            row
+            for row in self._outcomes
+            if row["capability_id"] == str(capability_id)
+        ]
+        if window_start:
+            rows = [row for row in rows if row["created_at"] >= window_start]
+        successes = sum(1 for row in rows if row["outcome"] == "SUCCESS")
+        return {"successes": successes, "total": len(rows)}
+
+    def delete(self, outcome_id) -> None:
+        self._outcomes = [
+            row for row in self._outcomes if row["id"] != str(outcome_id)
+        ]
+
+
 @pytest.fixture
 def config(tmp_path):
     """Configuration backed by a temporary config.json."""
@@ -464,6 +530,11 @@ def execution_repository():
 @pytest.fixture
 def recommendation_repository():
     return FakeRecommendationRepository()
+
+
+@pytest.fixture
+def outcome_repository():
+    return FakeOutcomeRepository()
 
 
 @pytest.fixture

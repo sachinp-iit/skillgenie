@@ -25,6 +25,11 @@ Instead of manually hardcoding workflows, SkillGenie continuously learns from su
 - PostgreSQL + pgvector Support
 - Framework Agnostic
 - Version Management
+- Model Context Protocol (MCP) Server & Skill Export
+- Framework Recording Hooks (LangGraph, CrewAI, custom)
+- Benchmark Harness
+- Outcome Feedback Loop & Drift Detection
+- Enterprise Governance (privacy, secret vault, explainability)
 
 ---
 
@@ -122,7 +127,8 @@ python -m pytest tests -q
 ```text
 usage: skillgenie [-h] {init-db,ingest,learn,learn-all,relearn,list,show,recommend,
                    approve,reject,publish,deprecate,archive,restore,exec,health,
-                   search,api} ...
+                   search,api,outcome,drift,failures,explain,export,mcp,governance,
+                   benchmark} ...
 ```
 
 Examples:
@@ -139,6 +145,24 @@ skillgenie learn <trace-id>
 skillgenie approve <skill-id>
 skillgenie recommend "search the web for product reviews"
 
+# Feedback loop & drift detection
+skillgenie outcome <skill-id> SUCCESS --time 120
+skillgenie drift <skill-id>
+skillgenie failures <skill-id>
+skillgenie explain <skill-id>
+
+# Export a skill as a standalone MCP tool
+skillgenie export <skill-id>
+
+# Enterprise governance summary
+skillgenie governance
+
+# Run the benchmark suite (no database required)
+skillgenie benchmark
+
+# Serve the MCP server over stdio
+skillgenie mcp --port 3100
+
 # Serve the REST API + dashboards
 skillgenie api --host 0.0.0.0 --port 8000
 ```
@@ -152,14 +176,34 @@ Start the API with `skillgenie api` (or `uvicorn skillgenie.api.app:create_app -
 | Route | Description |
 |-------|-------------|
 | `GET /api/v1/health` | Registry health overview |
-| `GET /api/v1/capabilities` | List + search skills |
-| `POST /api/v1/capabilities/learn` | Learn a skill from a trace |
-| `POST /api/v1/capabilities/{id}/recommend` | Recommend skills |
-| `GET /api/v1/capabilities/{id}` | Skill detail |
-| `PUT /api/v1/capabilities/{id}` | Update capabilities (approve, publish, evolve...) |
-| `DELETE /api/v1/capabilities/{id}` | Delete a skill |
-| `GET /api/v1/executions` | Execution records |
-| `GET /api/v1/recommendations` | Recent recommendations |
+| `GET /api/v1/skills` | List + search skills |
+| `GET /api/v1/skills/{skill_id}` | Skill detail |
+| `POST /api/v1/learn` | Learn a skill from a trace |
+| `POST /api/v1/learn/all` | Learn skills from all traces |
+| `POST /api/v1/skills/{skill_id}/relearn` | Relearn a skill |
+| `POST /api/v1/skills/{skill_id}/evaluate` | Evaluate a skill |
+| `POST /api/v1/skills/{skill_id}/{approve,publish,deprecate,archive,restore,reject}` | Lifecycle actions |
+| `POST /api/v1/recommend` | Recommend skills for a query |
+| `POST /api/v1/recommend/trace/{trace_id}` | Recommend from a trace |
+| `GET /api/v1/recommend/similar/{skill_id}` | Similar skills |
+| `POST /api/v1/outcomes` | Record a recommendation outcome |
+| `GET /api/v1/outcomes` | List recent outcomes |
+| `GET /api/v1/skills/{skill_id}/drift` | Drift detection |
+| `GET /api/v1/skills/{skill_id}/failures` | Recent failures |
+| `GET /api/v1/skills/{skill_id}/health/explain` | Explainable health score |
+| `GET /api/v1/export/{skill_id}` | Export skill as MCP tool |
+| `POST /api/v1/governance/secrets` | Store a secret in the vault |
+| `GET /api/v1/governance/secrets` | List vault secrets |
+| `POST /api/v1/traces` | Create a trace |
+| `GET /api/v1/traces` | List traces |
+| `GET /api/v1/traces/{trace_id}` | Trace detail |
+| `POST /api/v1/executions` | Record an execution |
+| `GET /api/v1/executions` | List executions |
+| `GET /api/v1/metrics/skills/{skill_id}` | Metrics history |
+| `GET /api/v1/audit/skills/{skill_id}` | Audit trail |
+| `GET /api/v1/monitor/overview` | Monitoring overview |
+| `GET /api/v1/monitor/governance` | Governance/compliance summary |
+| `GET /api/v1/admin/overview` | Admin overview |
 
 Dashboards (served by the API):
 
@@ -191,6 +235,16 @@ Update the following values:
 - OpenRouter API Key
 - Learning Thresholds
 
+Configuration sections include:
+
+| Section | Purpose |
+|---------|---------|
+| `feedback` | Outcome window and drift threshold (`drift_threshold`, `drift_window_hours`) |
+| `mcp` | MCP server host/port |
+| `integrations` | Framework recording hooks toggle |
+| `benchmark` | Benchmark task success overlap |
+| `governance` | Telemetry, data residency, PII redaction, secret vault |
+
 ---
 
 # Project Structure
@@ -208,6 +262,7 @@ skillgenie/
 │   │   ├── lifecycle.py
 │   │   ├── health.py
 │   │   ├── evolution.py
+│   │   ├── feedback.py
 │   │   ├── execution_service.py
 │   │   └── __init__.py
 │   │
@@ -225,6 +280,24 @@ skillgenie/
 │   │   └── templates/
 │   │       ├── admin.html
 │   │       └── monitor.html
+│   │
+│   ├── mcp/
+│   │   ├── server.py
+│   │   ├── __main__.py
+│   │   └── __init__.py
+│   │
+│   ├── integrations/
+│   │   ├── base.py
+│   │   ├── langgraph.py
+│   │   ├── crewai.py
+│   │   ├── custom.py
+│   │   └── __init__.py
+│   │
+│   ├── governance/
+│   │   ├── privacy.py
+│   │   ├── vault.py
+│   │   ├── manager.py
+│   │   └── __init__.py
 │   │
 │   ├── adapters/
 │   │   ├── base.py
@@ -260,6 +333,7 @@ skillgenie/
 │   │   │   ├── audit_repository.py
 │   │   │   ├── execution_repository.py
 │   │   │   ├── recommendation_repository.py
+│   │   │   ├── outcome_repository.py
 │   │   │   └── __init__.py
 │   │   └── sql/
 │   │       ├── create_tables.py
@@ -270,6 +344,7 @@ skillgenie/
 │   │   ├── capability.py
 │   │   ├── execution.py
 │   │   ├── metrics.py
+│   │   ├── outcome.py
 │   │   ├── recommendation.py
 │   │   ├── trace.py
 │   │   └── __init__.py
@@ -293,6 +368,11 @@ skillgenie/
 │   ├── exceptions.py
 │   └── __init__.py
 │
+├── benchmarks/
+│   ├── harness.py
+│   ├── run.py
+│   └── __init__.py
+│
 ├── config/
 ├── docs/
 ├── examples/
@@ -310,7 +390,7 @@ skillgenie/
 # Current Progress
 
 All core, API and dashboard features are implemented and covered by a mock-based
-test suite (**133 tests passing**).
+test suite (**174 tests passing**).
 
 ## Completed
 
@@ -329,6 +409,7 @@ test suite (**133 tests passing**).
 - Database Bootstrap & Migrations
 - Schema Creation & Indexes
 - Repository Layer
+- Outcome Repository (`skill_outcomes` table)
 
 ### Models
 
@@ -337,6 +418,7 @@ test suite (**133 tests passing**).
 - Execution Model
 - Metrics Model
 - Recommendation Model
+- Outcome Model
 
 ### Trace Processing
 
@@ -360,6 +442,7 @@ test suite (**133 tests passing**).
 - Relationship Graph Builder
 - Embedding Engine (hash, sentence-transformers, OpenRouter; pluggable factory)
 - Execution Service
+- Outcome Feedback Loop (success-rate refresh, drift detection, explainable health)
 
 ### Interfaces
 
@@ -367,7 +450,98 @@ test suite (**133 tests passing**).
 - REST API (FastAPI, `/api/v1/*`, OpenAPI docs)
 - Admin Dashboard (`/admin`)
 - Monitoring Dashboard (`/monitor`)
+- MCP Server (stdio, 6 tools) + Skill Export
+- Framework Recording Hooks (LangGraph, CrewAI, custom decorator)
+- Benchmark Harness (A/B measures, latency + success deltas)
+- Governance (PII redaction, data residency, encrypted secret vault)
 - Comprehensive Mock-Based Test Suite (PostgreSQL not required)
+
+---
+
+# Pro Features
+
+## Model Context Protocol (MCP)
+
+SkillGenie ships an MCP server exposing skills as conversational tools to any
+MCP-compatible client:
+
+```bash
+skillgenie mcp --host 127.0.0.1 --port 3100
+```
+
+Available tools: `skillgenie_search`, `skillgenie_list`, `skillgenie_recommend`,
+`skillgenie_learn`, `skillgenie_export`, `skillgenie_health`.
+
+Any skill can also be exported as a standalone tool definition (via CLI, API or
+MCP):
+
+```python
+from skillgenie.mcp.server import SkillGenieMCPServer
+
+server = SkillGenieMCPServer(config_file="config/config.json")
+tool_definition = server._export({"skill_id": "<skill-uuid>"})
+```
+
+## Framework Recording Hooks
+
+Record agentic runs into the SkillGenie trace store with one line:
+
+```python
+from skillgenie.integrations.langgraph import LangGraphRecorder
+from skillgenie.integrations.crewai import CrewAIRecorder
+from skillgenie.integrations.custom import CustomRecorder
+
+# LangGraph: wrap the graph so every invoke() is recorded
+graph = LangGraphRecorder(config).wrap(graph)
+
+# CrewAI: record after a crew finishes
+CrewAIRecorder(config).after_crew_run(result)
+
+# Custom: decorate any agent function
+@CustomRecorder(config).trace(task="Fetch stock prices")
+def my_agent():
+    ...
+```
+
+## Benchmark Harness
+
+Measure what SkillGenie adds to an agent workload (no database required):
+
+```bash
+skillgenie benchmark
+```
+
+Run an A/B comparison: the same tasks executed with vs. without SkillGenie
+recommendations, reporting success-rate delta, latency reduction and effort
+saved.
+
+## Outcome Feedback Loop & Drift Detection
+
+Learn from production outcomes and catch regressions automatically:
+
+```bash
+skillgenie outcome <skill-id> SUCCESS --time 120
+skillgenie drift <skill-id>      # DEGRADED / IMPROVED / STABLE
+skillgenie failures <skill-id>
+skillgenie explain <skill-id>    # weighted, explainable health score
+```
+
+Every outcome refreshes the skill's success rate and health. Drift detection
+compares recent vs. historical success rates over a configurable window.
+
+## Enterprise Governance
+
+- **Privacy** — automatic PII redaction (emails, phones, cards, IPs) and
+  configurable data residency.
+- **Secret vault** — encrypted at-rest storage via `VAULT_KEY` (falls back to a
+  local encrypted file or OS keyring).
+- **Governance report** — telemetry, residency and vault compliance summary via
+  CLI, API (`GET /api/v1/monitor/governance`) or engine:
+
+```python
+engine = SkillGenie(config_file="config/config.json")
+print(engine.governance_report())
+```
 
 ---
 
@@ -375,8 +549,9 @@ test suite (**133 tests passing**).
 
 Current Phase:
 
-**Feature Complete** — core engine, CLI, REST API, dashboards and mock-based
-test suite are implemented.
+**Feature Complete** — core engine, CLI, REST API, dashboards, MCP server,
+recording hooks, benchmark harness, feedback/drift loop and governance are
+implemented with a mock-based test suite.
 
 Next Milestones:
 

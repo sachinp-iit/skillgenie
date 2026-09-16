@@ -108,6 +108,51 @@ def build_parser() -> argparse.ArgumentParser:
     run_api.add_argument("--port", type=int, default=8000)
     run_api.add_argument("--reload", action="store_true", help="Auto-reload.")
 
+    # outcome (feedback loop)
+    outcome = sub.add_parser("outcome", help="Record a recommendation outcome.")
+    outcome.add_argument("skill_id", help="Skill ID.")
+    outcome.add_argument(
+        "--status",
+        default="SUCCESS",
+        help="Outcome: SUCCESS/FAILED/PARTIAL/CANCELLED.",
+    )
+    outcome.add_argument("--time", type=float, default=0.0, help="Latency (ms).")
+    outcome.add_argument(
+        "--recommendation-id",
+        default=None,
+        help="Originating recommendation ID.",
+    )
+    outcome.add_argument("--rating", type=float, default=None, help="Optional 0-5 rating.")
+
+    # drift
+    drift = sub.add_parser("drift", help="Detect performance drift for a skill.")
+    drift.add_argument("skill_id", help="Skill ID.")
+
+    # failures
+    failures = sub.add_parser("failures", help="Show recent failures for a skill.")
+    failures.add_argument("skill_id", help="Skill ID.")
+    failures.add_argument("--limit", type=int, default=20)
+
+    # explain-health
+    explain = sub.add_parser("explain", help="Explain a skill's health score.")
+    explain.add_argument("skill_id", help="Skill ID.")
+
+    # export
+    export = sub.add_parser("export", help="Export a skill as an MCP tool.")
+    export.add_argument("skill_id", help="Skill ID.")
+
+    # mcp
+    mcp = sub.add_parser("mcp", help="Start the MCP server (stdio).")
+    mcp.add_argument("--host", default="127.0.0.1")
+    mcp.add_argument("--port", type=int, default=3100)
+
+    # governance
+    gov = sub.add_parser("governance", help="Show governance/compliance summary.")
+    gov.add_argument("--set-secret", nargs=2, metavar=("NAME", "VALUE"), default=None)
+
+    # benchmark
+    bench = sub.add_parser("benchmark", help="Run the SkillGenie benchmark suite.")
+
     return parser
 
 
@@ -350,6 +395,157 @@ def cmd_search(args, engine: SkillGenie) -> None:
         )
 
 
+def cmd_outcome(args, engine: SkillGenie) -> None:
+    """
+    Record a recommendation outcome.
+    """
+
+    from uuid import UUID
+
+    outcome = engine.record_outcome(
+        capability_id=UUID(args.skill_id),
+        outcome=args.status,
+        recommendation_id=(
+            UUID(args.recommendation_id) if args.recommendation_id else None
+        ),
+        latency_ms=args.time,
+        rating=args.rating,
+    )
+
+    print(
+        json.dumps(
+            {
+                "outcome_id": str(outcome.id),
+                "outcome": outcome.outcome,
+                "latency_ms": outcome.latency_ms,
+                "rating": outcome.rating,
+            },
+            indent=2,
+        )
+    )
+
+
+def cmd_drift(args, engine: SkillGenie) -> None:
+    """
+    Detect performance drift.
+    """
+
+    from uuid import UUID
+
+    drift = engine.detect_drift(UUID(args.skill_id))
+
+    if drift is None:
+        print("No significant drift detected.")
+        return
+
+    print(json.dumps(drift, indent=2, default=str))
+
+
+def cmd_failures(args, engine: SkillGenie) -> None:
+    """
+    Show recent failures.
+    """
+
+    from uuid import UUID
+
+    failures = engine.recent_failures(UUID(args.skill_id), limit=args.limit)
+
+    if not failures:
+        print("No failures recorded.")
+        return
+
+    print(json.dumps(failures, indent=2, default=str))
+
+
+def cmd_explain(args, engine: SkillGenie) -> None:
+    """
+    Explain a skill's health score.
+    """
+
+    from uuid import UUID
+
+    print(json.dumps(engine.health_explanation(UUID(args.skill_id)), indent=2))
+
+
+def cmd_export(args, engine: SkillGenie) -> None:
+    """
+    Export a skill as an MCP tool.
+    """
+
+    from uuid import UUID
+
+    from skillgenie.mcp.server import SkillGenieMCPServer
+
+    tool = SkillGenieMCPServer(engine=engine)._export(
+        {"skill_id": args.skill_id}
+    )
+
+    print(json.dumps(tool, indent=2, default=str))
+
+
+def cmd_mcp(args) -> None:
+    """
+    Start the MCP server.
+    """
+
+    from skillgenie.mcp.server import SkillGenieMCPServer
+
+    server = SkillGenieMCPServer(config_file=args.config)
+    server.start(host=args.host, port=args.port)
+
+
+def cmd_governance(args, engine: SkillGenie) -> None:
+    """
+    Governance summary / secret management.
+    """
+
+    if args.set_secret:
+        name, value = args.set_secret
+        engine.governance.vault.set(name, value)
+        print(f"Secret '{name}' stored.")
+        return
+
+    print(json.dumps(engine.governance_report(), indent=2))
+
+
+def cmd_benchmark(args) -> None:
+    """
+    Run the benchmark suite.
+    """
+
+    import os
+
+    from skillgenie.config import Config
+
+    from benchmarks.harness import BenchmarkRunner, BenchmarkScenario
+
+    config = Config("config/benchmark.json")
+
+    scenarios = [
+        BenchmarkScenario(
+            name="web-research",
+            description="Web research and summarization tasks.",
+            skills=[
+                {
+                    "name": "Web Researcher",
+                    "description": "search the web and summarize results",
+                    "category": "research",
+                    "metadata": {"search_profile": {"tokens": "Web Researcher search the web and summarize results"}},
+                }
+            ],
+            tasks=[
+                "search the web and summarize results",
+                "web research with structured summaries",
+                "summarize a long technical article",
+            ],
+        )
+    ]
+
+    runner = BenchmarkRunner(config)
+    report = runner.run(scenarios[0], iterations=3)
+    print(json.dumps(report, indent=2))
+
+
 def cmd_api(args) -> None:
     """
     Start the REST API server.
@@ -400,6 +596,14 @@ def main(argv: list[str] | None = None) -> None:
         cmd_api(args)
         return
 
+    if args.command == "mcp":
+        cmd_mcp(args)
+        return
+
+    if args.command == "benchmark":
+        cmd_benchmark(args)
+        return
+
     engine = _build_engine(args.config)
 
     command_map = {
@@ -413,6 +617,12 @@ def main(argv: list[str] | None = None) -> None:
         "exec": cmd_exec,
         "health": cmd_health,
         "search": cmd_search,
+        "outcome": cmd_outcome,
+        "drift": cmd_drift,
+        "failures": cmd_failures,
+        "explain": cmd_explain,
+        "export": cmd_export,
+        "governance": cmd_governance,
     }
 
     if args.command in command_map:

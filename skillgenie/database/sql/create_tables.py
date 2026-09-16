@@ -258,4 +258,38 @@ def create_tables(database: DatabaseManager) -> None:
             )
         )
 
+    # ---------------------------------------------------------------------
+        # Skill Outcomes (recommendation feedback loop)
+        # ---------------------------------------------------------------------
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS skill_outcomes (
+
+                    id UUID PRIMARY KEY,
+
+                    capability_id UUID
+                        REFERENCES skills(id)
+                        ON DELETE CASCADE,
+
+                    recommendation_id UUID
+                        REFERENCES recommendations(id)
+                        ON DELETE SET NULL,
+
+                    outcome VARCHAR(30),
+
+                    latency_ms DOUBLE PRECISION DEFAULT 0,
+
+                    rating DOUBLE PRECISION,
+
+                    metadata JSONB,
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                );
+                """
+            )
+        )
+
     print("SkillGenie database schema created successfully.")

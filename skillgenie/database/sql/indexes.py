@@ -242,4 +242,35 @@ def create_indexes(database: DatabaseManager) -> None:
             )
         )
 
+        # ---------------------------------------------------------------------
+        # Outcome Indexes
+        # ---------------------------------------------------------------------
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outcomes_capability
+                ON skill_outcomes(capability_id);
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outcomes_recommendation
+                ON skill_outcomes(recommendation_id);
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_outcomes_created_at
+                ON skill_outcomes(created_at DESC);
+                """
+            )
+        )
+
     print("Database indexes created successfully.")

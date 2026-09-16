@@ -55,6 +55,32 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,
         "interval_seconds": 60,
     },
+    "feedback": {
+        "drift_threshold": 0.20,
+        "drift_window_hours": 168,
+    },
+    "mcp": {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 3100,
+    },
+    "integrations": {
+        "enabled": True,
+    },
+    "benchmark": {
+        "success_overlap": 0.50,
+    },
+    "governance": {
+        "privacy": {
+            "telemetry_enabled": True,
+            "data_residency": "self-hosted",
+            "redact_pii": True,
+        },
+        "vault": {
+            "path": "config/secrets",
+            "key_env": "VAULT_KEY",
+        },
+    },
 }
 
 

@@ -16,6 +16,7 @@ from skillgenie.database.repositories.execution_repository import (
     ExecutionRepository,
 )
 from skillgenie.database.repositories.metrics_repository import MetricsRepository
+from skillgenie.database.repositories.outcome_repository import OutcomeRepository
 from skillgenie.database.repositories.recommendation_repository import (
     RecommendationRepository,
 )
@@ -29,4 +30,5 @@ __all__ = [
     "AuditRepository",
     "ExecutionRepository",
     "RecommendationRepository",
+    "OutcomeRepository",
 ]

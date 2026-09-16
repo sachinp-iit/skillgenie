@@ -14,6 +14,11 @@ from tests.conftest import make_capability
 
 @pytest.fixture
 def mock_engine():
+    from uuid import uuid4
+
+    from skillgenie.config import Config
+    from skillgenie.models.outcome import Outcome
+
     engine = Mock()
 
     engine.store = Mock()
@@ -26,6 +31,24 @@ def mock_engine():
     engine.evaluator = Mock()
     engine.lifecycle = Mock()
     engine.recommender = Mock()
+    engine.outcomes = Mock()
+    engine.outcomes.list.return_value = []
+    engine.config = Config("config/config.json")
+    engine.governance = Mock()
+    engine.governance.vault = Mock()
+    engine.governance.vault.list_names.return_value = []
+    engine.detect_drift.return_value = None
+    engine.recent_failures.return_value = []
+    engine.health_explanation.return_value = {}
+    engine.record_outcome.return_value = Outcome(
+        id=uuid4(),
+        capability_id=uuid4(),
+        recommendation_id=None,
+        outcome="SUCCESS",
+        latency_ms=120.0,
+        rating=5,
+        metadata={},
+    )
 
     return engine
 
@@ -183,3 +206,103 @@ def test_metrics_history(client, mock_engine):
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_record_outcome(client, mock_engine):
+    response = client.post(
+        "/api/v1/outcomes",
+        json={
+            "capability_id": "00000000-0000-0000-0000-000000000001",
+            "outcome": "SUCCESS",
+            "latency_ms": 120.0,
+        },
+    )
+
+    assert response.status_code == 201
+
+
+def test_list_outcomes(client, mock_engine):
+    response = client.get("/api/v1/outcomes")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_skill_drift(client, mock_engine):
+    response = client.get(
+        "/api/v1/skills/00000000-0000-0000-0000-000000000001/drift"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["drift_detected"] is False
+
+
+def test_skill_failures(client, mock_engine):
+    response = client.get(
+        "/api/v1/skills/00000000-0000-0000-0000-000000000001/failures"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_skill_health_explanation(client, mock_engine):
+    mock_engine.health_explanation.return_value = {"score": 0.91}
+
+    response = client.get(
+        "/api/v1/skills/00000000-0000-0000-0000-000000000001/health/explain"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["score"] == 0.91
+
+
+def test_export_skill(client, mock_engine):
+    skill = make_capability()
+
+    mock_engine.store.get.return_value = skill
+
+    response = client.get(f"/api/v1/export/{skill.id}")
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert "skillgenie" in payload
+    assert payload["name"] == skill.name.lower().replace(" ", "_")
+
+
+def test_set_secret(client, mock_engine):
+    response = client.post(
+        "/api/v1/governance/secrets",
+        json={"name": "api_key", "value": "sk-123"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["stored"] is True
+
+    mock_engine.governance.vault.set.assert_called_once_with(
+        "api_key", "sk-123"
+    )
+
+
+def test_list_secrets(client, mock_engine):
+    mock_engine.governance.vault.list_names.return_value = ["api_key"]
+
+    response = client.get("/api/v1/governance/secrets")
+
+    assert response.status_code == 200
+    assert response.json()["names"] == ["api_key"]
+
+
+def test_monitor_governance(client, mock_engine):
+    mock_engine.governance_report.return_value = {
+        "telemetry_enabled": True,
+        "data_residency": "self-hosted",
+        "vault_secrets": [],
+    }
+
+    response = client.get("/api/v1/monitor/governance")
+
+    assert response.status_code == 200
+    assert response.json()["data_residency"] == "self-hosted"
