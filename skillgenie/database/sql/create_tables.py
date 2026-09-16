@@ -182,4 +182,80 @@ def create_tables(database: DatabaseManager) -> None:
             )
         )
 
+        # ---------------------------------------------------------------------
+        # Capability Executions
+        # ---------------------------------------------------------------------
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS executions (
+
+                    id UUID PRIMARY KEY,
+
+                    capability_id UUID
+                        REFERENCES skills(id)
+                        ON DELETE CASCADE,
+
+                    trace_id UUID,
+
+                    task_name VARCHAR(255),
+
+                    execution_status VARCHAR(30),
+
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    completed_at TIMESTAMP,
+
+                    execution_time_ms DOUBLE PRECISION DEFAULT 0,
+
+                    input_data JSONB,
+
+                    output_data JSONB,
+
+                    error_message TEXT,
+
+                    metadata JSONB,
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                );
+                """
+            )
+        )
+
+        # ---------------------------------------------------------------------
+        # Skill Recommendations
+        # ---------------------------------------------------------------------
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS recommendations (
+
+                    id UUID PRIMARY KEY,
+
+                    capability_id UUID
+                        REFERENCES skills(id)
+                        ON DELETE CASCADE,
+
+                    recommendation_type VARCHAR(30),
+
+                    confidence_score DOUBLE PRECISION DEFAULT 0,
+
+                    similarity_score DOUBLE PRECISION DEFAULT 0,
+
+                    ranking_score DOUBLE PRECISION DEFAULT 0,
+
+                    reason TEXT,
+
+                    metadata JSONB,
+
+                    recommended_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                );
+                """
+            )
+        )
+
     print("SkillGenie database schema created successfully.")

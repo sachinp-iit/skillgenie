@@ -9,17 +9,32 @@
 # License      : MIT
 # ============================================================================
 
+from __future__ import annotations
+
 from typing import Any
 from uuid import UUID
 
 from skillgenie.config import Config
+from skillgenie.core.evaluator import SkillEvaluator
+from skillgenie.core.scorer import SkillScorer
 from skillgenie.database.manager import DatabaseManager
+from skillgenie.database.repositories.audit_repository import AuditRepository
 from skillgenie.database.repositories.capability_repository import (
     CapabilityRepository,
+)
+from skillgenie.database.repositories.execution_repository import (
+    ExecutionRepository,
+)
+from skillgenie.database.repositories.metrics_repository import (
+    MetricsRepository,
 )
 from skillgenie.database.repositories.trace_repository import (
     TraceRepository,
 )
+from skillgenie.embeddings.base import EmbeddingProvider
+from skillgenie.exceptions import CapabilityNotFoundError
+from skillgenie.models.capability import Capability
+from skillgenie.storage.skill_store import SkillStore
 from skillgenie.tracing.duplicate_detector import DuplicateDetector
 from skillgenie.tracing.input_output_extractor import (
     InputOutputExtractor,
@@ -43,6 +58,12 @@ class SkillLearner:
         self,
         config: Config,
         database: DatabaseManager,
+        trace_repository: TraceRepository | None = None,
+        skill_repository: CapabilityRepository | None = None,
+        metrics_repository: MetricsRepository | None = None,
+        audit_repository: AuditRepository | None = None,
+        execution_repository: ExecutionRepository | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ):
         """
         Initialize Skill Learner.
@@ -50,18 +71,61 @@ class SkillLearner:
         Args:
             config: SkillGenie configuration.
             database: Database manager.
+            trace_repository: Optional repository override.
+            skill_repository: Optional repository override.
+            metrics_repository: Optional repository override.
+            audit_repository: Optional repository override.
+            execution_repository: Optional repository override.
+            embedding_provider: Optional embedding provider.
         """
 
-        # Store dependencies
         self._config = config
         self._database = database
 
-        # Logger
         self._logger = Logger(config).log
 
-        # Repositories
-        self._trace_repository = TraceRepository(database)
-        self._skill_repository = CapabilityRepository(database)
+        self._trace_repository = (
+            trace_repository or TraceRepository(database)
+        )
+        self._skill_repository = (
+            skill_repository or CapabilityRepository(database)
+        )
+        self._metrics_repository = (
+            metrics_repository or MetricsRepository(database)
+        )
+        self._audit_repository = (
+            audit_repository or AuditRepository(database)
+        )
+        self._execution_repository = (
+            execution_repository or ExecutionRepository(database)
+        )
+
+        self._embedding_provider = embedding_provider
+
+        self._store = SkillStore(
+            config=config,
+            repository=self._skill_repository,
+            embedding_provider=embedding_provider,
+        )
+
+        self._scorer = SkillScorer(config)
+
+        self._duplicate_detector = DuplicateDetector(
+            repository=self._skill_repository,
+            config=config,
+            scorer=self._scorer,
+            store=self._store,
+        )
+
+        self._evaluator = SkillEvaluator(
+            config=config,
+            database=database,
+            skill_repository=self._skill_repository,
+            metrics_repository=self._metrics_repository,
+            audit_repository=self._audit_repository,
+            execution_repository=self._execution_repository,
+            scorer=self._scorer,
+        )
 
         # Tracing components
         self._trace_parser = TraceParser()
@@ -70,14 +134,19 @@ class SkillLearner:
         self._prompt_extractor = PromptExtractor()
         self._io_extractor = InputOutputExtractor()
         self._skill_generator = SkillGenerator()
-        self._duplicate_detector = DuplicateDetector(
-            self._skill_repository
-        )
+
+    @property
+    def store(self) -> SkillStore:
+        """
+        Skill store backing the learner.
+        """
+
+        return self._store
 
     def learn(
         self,
         trace_id: str,
-    ):
+    ) -> Capability:
         """
         Learn a reusable skill from a trace.
 
@@ -85,35 +154,22 @@ class SkillLearner:
             trace_id: Trace identifier.
 
         Returns:
-            Generated skill or existing duplicate.
+            Generated skill or matched duplicate.
         """
 
         self._logger.info(
             f"Starting learning pipeline for trace '{trace_id}'."
         )
 
-        # Load raw trace
         raw_trace = self._load_trace(trace_id)
-
-        # Parse trace
         trace = self._parse_trace(raw_trace)
-
-        # Validate trace
         self._validate_trace(trace)
 
-        # Extract workflow
         workflow = self._extract_workflow(trace)
-
-        # Extract tools
         tools = self._extract_tools(trace)
-
-        # Extract prompts
         prompts = self._extract_prompts(trace)
-
-        # Extract inputs & outputs
         input_output = self._extract_input_output(trace)
 
-        # Generate candidate skill
         skill = self._generate_skill(
             trace=trace,
             workflow=workflow,
@@ -122,27 +178,44 @@ class SkillLearner:
             input_output=input_output,
         )
 
-        # Check duplicates
-        duplicate = self._find_duplicate(skill)
+        self._finalize_skill(
+            skill,
+            trace=trace,
+            tools=tools,
+            workflow=workflow,
+        )
+
+        threshold = self._config.get_float(
+            "similarity.threshold",
+            0.85,
+        )
+
+        duplicate = self._duplicate_detector.find_duplicate(
+            skill,
+            threshold=threshold,
+        )
 
         if duplicate is not None:
-
             self._logger.info(
                 f"Duplicate skill found: {skill.name}"
             )
 
+            self._attach_trace(duplicate, trace_id)
+
             return duplicate
 
-        # Persist new skill
-        self._save_skill(skill)
+        self._save_skill(skill, trace_id)
+
+        self._evaluator.evaluate(skill)
 
         self._logger.info(
-            f"Generated new skill: {skill.name}"
+            f"Generated new skill: {skill.name} "
+            f"[{skill.status.value}]"
         )
 
         return skill
 
-    def learn_all(self):
+    def learn_all(self) -> list[Capability]:
         """
         Learn skills from all traces.
         """
@@ -153,10 +226,9 @@ class SkillLearner:
 
         traces = self._trace_repository.list()
 
-        learned_skills = []
+        learned_skills: list[Capability] = []
 
         for trace in traces:
-
             trace_id = trace["id"]
 
             learned_skills.append(
@@ -164,11 +236,93 @@ class SkillLearner:
             )
 
         return learned_skills
-    
-    def _load_trace(
+
+    def relearn(
         self,
-        trace_id: str,
-    ) -> dict[str, Any]:
+        skill_id: str,
+    ) -> Capability:
+        """
+        Relearn an existing skill from its source traces.
+
+        Args:
+            skill_id: Skill identifier.
+        """
+
+        self._logger.info(
+            f"Relearning skill '{skill_id}'."
+        )
+
+        capability_id = UUID(str(skill_id))
+
+        skill = self._store.get(capability_id)
+
+        if skill is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_id}' does not exist."
+            )
+
+        source_trace_ids = skill.created_from
+
+        new_workflow = None
+        new_tools: list[dict[str, Any]] = []
+        new_prompts: list[dict[str, Any]] = []
+        new_input_output: dict[str, Any] = {}
+
+        for trace_id in source_trace_ids:
+            trace = self._parse_trace(self._load_trace(trace_id))
+
+            work = self._extract_workflow(trace)
+            tools = self._extract_tools(trace)
+            prompts = self._extract_prompts(trace)
+            io = self._extract_input_output(trace)
+
+            new_workflow = new_workflow or work
+            new_tools.extend(tools)
+            new_prompts.extend(prompts)
+            new_input_output = new_input_output or io
+
+        if new_workflow is None:
+            raise ValueError(
+                f"Skill '{skill_id}' has no source traces to relearn from."
+            )
+
+        skill.workflow = new_workflow
+        skill.embedding = self._embed_skill(
+            skill,
+            trace=skill.workflow.get("name", skill.name) or skill.name,
+            tools=new_tools,
+            workflow=new_workflow,
+        )
+
+        enriched_metadata = dict(skill.metadata or {})
+        enriched_metadata["tools"] = new_tools
+        enriched_metadata["prompts"] = new_prompts
+        enriched_metadata["input_output"] = new_input_output
+        enriched_metadata["search_profile"] = self._search_profile(
+            skill,
+            trace=(skill.workflow.get("name", skill.name) or skill.name),
+            tools=new_tools,
+        )
+        skill.metadata = enriched_metadata
+
+        self._store.update(
+            capability_id,
+            workflow=new_workflow,
+            embedding=skill.embedding,
+            metadata=enriched_metadata,
+        )
+
+        self._evaluator.reevaluate(skill)
+
+        self._audit(
+            skill=skill,
+            action="RELEARNED",
+            remarks=f"Reprocessed {len(source_trace_ids)} trace(s).",
+        )
+
+        return skill
+
+    def _load_trace(self, trace_id: str) -> dict[str, Any]:
         """
         Load a trace from the repository.
 
@@ -179,54 +333,51 @@ class SkillLearner:
             Raw execution trace.
         """
 
-        self._logger.debug(
-            f"Loading trace '{trace_id}'."
-        )
+        self._logger.debug(f"Loading trace '{trace_id}'.")
 
-        trace = self._trace_repository.get_by_id(
-            UUID(trace_id)
-        )
+        trace = self._trace_repository.get_by_id(UUID(trace_id))
 
         if trace is None:
-
-            raise ValueError(
-                f"Trace '{trace_id}' does not exist."
-            )
+            raise ValueError(f"Trace '{trace_id}' does not exist.")
 
         return dict(trace)
 
-    def _parse_trace(
-        self,
-        trace: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _parse_trace(self, trace: dict[str, Any]) -> dict[str, Any]:
         """
         Parse raw execution trace.
 
         Args:
-            trace: Raw trace.
+            trace: Stored trace row containing the raw execution payload
+                under the 'trace' key.
 
         Returns:
             Normalized trace.
         """
 
-        framework = trace.get(
-            "agent_framework",
-            "custom",
-        )
+        framework = trace.get("agent_framework", "custom")
 
-        self._logger.debug(
-            f"Parsing {framework} trace."
-        )
+        raw = trace.get("trace")
 
-        return self._trace_parser.parse(
-            trace=trace,
-            framework=framework,
-        )
+        if not isinstance(raw, dict):
+            raise ValueError("Trace payload is empty or malformed.")
 
-    def _validate_trace(
-        self,
-        trace: dict[str, Any],
-    ) -> None:
+        merged = dict(raw)
+
+        merged.setdefault(
+            "task",
+            trace.get("task_description") or trace.get("task", ""),
+        )
+        merged.setdefault(
+            "goal",
+            trace.get("goal") or trace.get("task_description", ""),
+        )
+        merged.setdefault("metadata", trace.get("metadata") or {})
+
+        self._logger.debug(f"Parsing {framework} trace.")
+
+        return self._trace_parser.parse(merged, framework=framework)
+
+    def _validate_trace(self, trace: dict[str, Any]) -> None:
         """
         Validate normalized trace.
 
@@ -234,112 +385,43 @@ class SkillLearner:
             trace: Normalized trace.
         """
 
-        self._logger.debug(
-            "Validating normalized trace."
-        )
+        self._logger.debug("Validating normalized trace.")
 
         if not self._trace_parser.validate(trace):
+            raise ValueError("Trace validation failed.")
 
-            raise ValueError(
-                "Trace validation failed."
-            )
-
-    def _extract_workflow(
-        self,
-        trace: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _extract_workflow(self, trace: dict[str, Any]) -> dict[str, Any]:
         """
         Extract workflow.
-
-        Args:
-            trace: Normalized trace.
-
-        Returns:
-            Workflow.
         """
 
-        self._logger.debug(
-            "Extracting workflow."
-        )
+        return self._workflow_extractor.extract(trace)
 
-        return self._workflow_extractor.extract(
-            trace
-        )
-
-    def _extract_tools(
-        self,
-        trace: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+    def _extract_tools(self, trace: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Extract tools.
-
-        Args:
-            trace: Normalized trace.
-
-        Returns:
-            List of tools.
         """
 
-        self._logger.debug(
-            "Extracting tools."
-        )
+        tools = self._tool_extractor.extract(trace)
 
-        tools = self._tool_extractor.extract(
-            trace
-        )
+        return self._tool_extractor.unique_tools(tools)
 
-        return self._tool_extractor.unique_tools(
-            tools
-        )
-
-    def _extract_prompts(
-        self,
-        trace: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+    def _extract_prompts(self, trace: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Extract prompts.
-
-        Args:
-            trace: Normalized trace.
-
-        Returns:
-            List of prompts.
         """
 
-        self._logger.debug(
-            "Extracting prompts."
-        )
+        prompts = self._prompt_extractor.extract(trace)
 
-        prompts = self._prompt_extractor.extract(
-            trace
-        )
+        return self._prompt_extractor.unique_prompts(prompts)
 
-        return self._prompt_extractor.unique_prompts(
-            prompts
-        )
-
-    def _extract_input_output(
-        self,
-        trace: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _extract_input_output(self, trace: dict[str, Any]) -> dict[str, Any]:
         """
         Extract execution inputs and outputs.
-
-        Args:
-            trace: Normalized trace.
-
-        Returns:
-            Input/output information.
         """
 
-        self._logger.debug(
-            "Extracting execution inputs and outputs."
-        )
+        return self._io_extractor.extract(trace)
 
-        return self._io_extractor.extract(
-            trace
-        )
-        
     def _generate_skill(
         self,
         trace: dict[str, Any],
@@ -347,24 +429,10 @@ class SkillLearner:
         tools: list[dict[str, Any]],
         prompts: list[dict[str, Any]],
         input_output: dict[str, Any],
-    ):
+    ) -> Capability:
         """
         Generate a candidate skill.
-
-        Args:
-            trace: Normalized trace.
-            workflow: Extracted workflow.
-            tools: Extracted tools.
-            prompts: Extracted prompts.
-            input_output: Extracted input/output.
-
-        Returns:
-            Generated skill.
         """
-
-        self._logger.debug(
-            "Generating candidate skill."
-        )
 
         return self._skill_generator.generate(
             trace=trace,
@@ -374,116 +442,150 @@ class SkillLearner:
             input_output=input_output,
         )
 
-    def _find_duplicate(
+    def _finalize_skill(
         self,
-        skill,
-    ):
-        """
-        Check whether the generated skill already exists.
-
-        Args:
-            skill: Generated skill.
-
-        Returns:
-            Existing skill if found, otherwise None.
-        """
-
-        self._logger.debug(
-            f"Checking duplicate for '{skill.name}'."
-        )
-
-        return self._duplicate_detector.find_duplicate(
-            skill
-        )
-
-    def _save_skill(
-        self,
-        skill,
+        skill: Capability,
+        trace: dict[str, Any],
+        tools: list[dict[str, Any]],
+        workflow: dict[str, Any],
     ) -> None:
         """
-        Persist a newly generated skill.
-
-        Args:
-            skill: Generated skill.
+        Enrich a generated skill with embeddings and search metadata.
         """
 
-        self._logger.debug(
-            f"Persisting skill '{skill.name}'."
+        task_text = trace.get("task", "") or trace.get("goal", "") or skill.name
+
+        skill.embedding = self._embed_skill(
+            skill,
+            trace=task_text,
+            tools=tools,
+            workflow=workflow,
         )
 
-        self._skill_repository.create(
+        metadata = dict(skill.metadata or {})
+
+        metadata["search_profile"] = self._search_profile(
+            skill,
+            trace=task_text,
+            tools=tools,
+        )
+
+        skill.metadata = metadata
+
+    def _embed_skill(
+        self,
+        skill: Capability,
+        trace: str,
+        tools: list[dict[str, Any]],
+        workflow: dict[str, Any],
+    ) -> list[float]:
+        """
+        Generate the embedding for a skill.
+        """
+
+        if self._embedding_provider is None:
+            return []
+
+        tool_names = " ".join(
+            str(tool.get("name", "")) if isinstance(tool, dict) else str(tool)
+            for tool in tools
+        )
+
+        purpose = (
+            f"{skill.name}. {skill.description}. "
+            f"Task: {trace}. Tools: {tool_names}."
+        )
+
+        return self._embedding_provider.embed_text(purpose)
+
+    def _search_profile(
+        self,
+        skill: Capability,
+        trace: str,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Lexical fallback profile for no-embedding searches.
+        """
+
+        tool_names = " ".join(
+            str(tool.get("name", "")) if isinstance(tool, dict) else str(tool)
+            for tool in tools
+        )
+
+        return {
+            "tokens": (
+                f"{skill.name} {skill.description} {trace} {tool_names}"
+            ),
+        }
+
+    def _attach_trace(
+        self,
+        skill: Capability,
+        trace_id: str,
+    ) -> None:
+        """
+        Associate a source trace with an existing skill.
+        """
+
+        if trace_id in skill.created_from:
+            self._logger.debug(
+                f"Trace '{trace_id}' already attached to '{skill.name}'."
+            )
+            return
+
+        skill.created_from.append(trace_id)
+
+        self._skill_repository.update(
             capability_id=skill.id,
-            name=skill.name,
-            description=skill.description,
-            category=skill.category,
-            version=skill.version,
-            status=skill.status.value,
+            created_from=skill.created_from,
         )
 
-        self._update_metrics(skill)
+        self._audit(
+            skill=skill,
+            action="TRACE_ATTACHED",
+            remarks=f"Attached trace '{trace_id}'.",
+        )
+
+    def _save_skill(self, skill: Capability, trace_id: str) -> None:
+        """
+        Persist a newly generated skill.
+        """
+
+        self._logger.debug(f"Persisting skill '{skill.name}'.")
+
+        skill.created_from.append(trace_id)
+
+        self._store.create(skill)
 
         self._audit(
             skill=skill,
             action="CREATE",
+            remarks=f"Created from trace '{trace_id}'.",
         )
-
-    def _update_metrics(
-        self,
-        skill,
-    ) -> None:
-        """
-        Update initial skill metrics.
-
-        Args:
-            skill: Generated skill.
-        """
-
-        self._logger.debug(
-            f"Initializing metrics for '{skill.name}'."
-        )
-
-        # Metrics initialization will be implemented
-        # after the scoring engine is completed.
 
     def _audit(
         self,
-        skill,
+        skill: Capability,
         action: str,
+        remarks: str = "",
     ) -> None:
         """
         Create an audit entry.
-
-        Args:
-            skill: Generated skill.
-            action: Audit action.
         """
 
-        self._logger.debug(
-            f"Audit action '{action}' for '{skill.name}'."
-        )
+        self._logger.debug(f"Audit action '{action}' for '{skill.name}'.")
 
-        # Audit integration will be implemented after
-        # the audit service is completed.
+        from uuid import uuid4
 
-    def relearn(
-        self,
-        skill_id: str,
-    ):
-        """
-        Relearn an existing skill.
-
-        Args:
-            skill_id: Skill identifier.
-        """
-
-        self._logger.info(
-            f"Relearning skill '{skill_id}'."
-        )
-
-        # Existing execution traces associated with the
-        # skill will be reprocessed to improve quality,
-        # confidence and recommendation ranking.
-
-        raise NotImplementedError(
-            "Skill relearning is not implemented yet."
+        self._audit_repository.create(
+            audit_id=uuid4(),
+            capability_id=skill.id,
+            action=action,
+            performed_by="learner",
+            remarks=remarks,
+            payload={
+                "name": skill.name,
+                "version": skill.version,
+            },
         )

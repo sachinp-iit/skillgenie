@@ -48,19 +48,31 @@ dependencies = [
 
 [project.optional-dependencies]
 
+api = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30"
+]
+
 dev = [
     "pytest",
     "pytest-cov",
     "black",
     "ruff",
-    "mypy"
+    "mypy",
+    "httpx>=0.27"
 ]
+
+[project.scripts]
+skillgenie = "skillgenie.cli.main:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["skillgenie*"]
+
+[tool.setuptools.package-data]
+skillgenie = ["dashboard/templates/*.html"]
 
 [tool.black]
 line-length = 100

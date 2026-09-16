@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SkillGenie – Monitor</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;padding:2rem}
+h1{font-size:1.75rem;margin-bottom:1.5rem;color:#38bdf8}
+.controls{margin-bottom:1.5rem}
+button{background:#0ea5e9;color:#fff;border:none;border-radius:6px;padding:.5rem 1rem;cursor:pointer;font-size:.9rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:1rem;margin-bottom:2rem}
+.stat{background:#1e293b;border-radius:10px;padding:1rem 1.25rem;text-align:center}
+.stat .val{font-size:2rem;font-weight:700;color:#38bdf8}
+.stat .lbl{font-size:.85rem;color:#94a3b8;margin-top:.4rem}
+.bar-chart{margin-bottom:2rem}
+.bar-row{display:flex;align-items:center;margin-bottom:.5rem}
+.bar-label{width:90px;font-size:.85rem;text-align:right;padding-right:10px;color:#94a3b8}
+.bar-track{flex:1;background:#1e293b;border-radius:6px;height:22px;position:relative}
+.bar-fill{height:100%;border-radius:6px;min-width:4px;transition:width .5s}
+.bar-val{position:absolute;right:8px;top:2px;font-size:.8rem;color:#e2e8f0}
+.recent{background:#1e293b;border-radius:10px;padding:1.25rem}
+.recent h2{font-size:1.1rem;margin-bottom:1rem;color:#f1f5f9}
+.row{display:flex;justify-content:space-between;border-bottom:1px solid #334155;padding:.6rem 0;font-size:.9rem}
+.row:last-child{border:none}
+.badge{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:20px;color:#fff}
+.badge.PUBLISHED{background:#10b981}
+.badge.APPROVED{background:#0ea5e9}
+.badge.CANDIDATE{background:#f59e0b}
+.badge.DRAFT{background:#64748b}
+.badge.DEPRECATED{background:#ef4444}
+.badge.ARCHIVED{background:#475569}
+.ex{margin-top:2rem}
+</style>
+</head>
+<body>
+<h1>SkillGenie – Monitoring Dashboard</h1>
+<div class="controls"><button onclick="load()">Refresh</button></div>
+
+<div id="stats" class="stats"></div>
+<div id="health" class="bar-chart"></div>
+<div id="statuses" class="bar-chart"></div>
+<div id="recent" class="recent"><h2>Recent Skills</h2><div id="recent-list"></div></div>
+
+<script>
+const API = '/api/v1';
+const COLORS = {EXCELLENT:'#10b981', GOOD:'#22c55e', FAIR:'#f59e0b', POOR:'#ef4444', CRITICAL:'#991b1b',
+  PUBLISHED:'#10b981', APPROVED:'#0ea5e9', CANDIDATE:'#f59e0b', DRAFT:'#64748b', DEPRECATED:'#ef4444', ARCHIVED:'#475569'};
+
+async function api(path) { const res = await fetch(API+path); return res.json(); }
+
+function statsHTML(overview) {
+  const total = overview.total_skills || 0;
+  return `<div class="stat"><div class="val">${total}</div><div class="lbl">Total Skills</div></div>
+    <div class="stat"><div class="val">${overview.statuses?.PUBLISHED||0}</div><div class="lbl">Published</div></div>
+    <div class="stat"><div class="val">${overview.statuses?.CANDIDATE||0}</div><div class="lbl">Pending</div></div>
+    <div class="stat"><div class="val">${overview.statuses?.DEPRECATED||0}</div><div class="lbl">Deprecated</div></div>`;
+}
+
+function barChart(label, data, max) {
+  return `<div class="bar-row">
+    <div class="bar-label">${label}</div>
+    <div class="bar-track"><div class="bar-fill" style="width:${(data/max)*100}%;background:${COLORS[label]||'#64748b'}"></div><div class="bar-val">${data}</div></div></div>`;
+}
+
+function barSection(title, data) {
+  const max = Math.max(...Object.values(data), 1);
+  return `<h2 style="font-size:1.1rem;margin-bottom:.75rem;color:#f1f5f9">${title}</h2>` +
+    Object.entries(data).map(([k,v]) => barChart(k,v,max)).join('');
+}
+
+function recentHTML(skills) {
+  return skills.map(s => `<div class="row"><span><span class="badge ${s.status}">${s.status}</span> ${s.name}</span><span style="color:#94a3b8">${s.category||''}</span></div>`).join('') || '<div style="color:#94a3b8">No skills yet.</div>';
+}
+
+async function load() {
+  const overview = await api('/monitor/overview');
+  document.getElementById('stats').innerHTML = statsHTML(overview);
+  document.getElementById('health').innerHTML = barSection('Health Distribution', overview.health||{});
+  document.getElementById('statuses').innerHTML = barSection('Status Distribution', overview.statuses||{});
+  const skills = await api('/skills');
+  document.getElementById('recent-list').innerHTML = recentHTML(skills.slice(0,12));
+}
+
+load();
+</script>
+</body>
+</html>

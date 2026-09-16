@@ -7,8 +7,10 @@
 # License      : MIT
 # ============================================================================
 
+from typing import Any
 from uuid import UUID
 
+import orjson
 from sqlalchemy import text
 
 from skillgenie.database.manager import DatabaseManager
@@ -19,6 +21,16 @@ class TraceRepository(BaseRepository):
     """
     Repository for the traces table.
     """
+
+    _UPDATABLE_COLUMNS = {
+        "trace_name",
+        "agent_framework",
+        "task_description",
+        "execution_status",
+        "execution_time_ms",
+        "trace",
+        "metadata",
+    }
 
     def __init__(self, database: DatabaseManager):
         """
@@ -173,6 +185,75 @@ class TraceRepository(BaseRepository):
                 {
                     "id": str(trace_id),
                 },
+            )
+
+            self.commit(session)
+
+        except Exception:
+
+            self.rollback(session)
+
+            raise
+
+        finally:
+
+            self.close(session)
+
+    def update(
+        self,
+        trace_id: UUID,
+        **fields: Any,
+    ) -> None:
+        """
+        Update one or more columns on an existing trace.
+
+        Args:
+            trace_id: Trace identifier.
+            **fields: Column values keyed by column name.
+        """
+
+        unsupported = set(fields) - self._UPDATABLE_COLUMNS
+
+        if unsupported:
+            raise ValueError(
+                f"Unsupported columns: {sorted(unsupported)}"
+            )
+
+        if not fields:
+            return
+
+        assignments = ", ".join(
+            f"{column} = :{column}"
+            for column in fields
+        )
+
+        params: dict[str, Any] = {
+            "id": str(trace_id),
+        }
+
+        for column, value in fields.items():
+
+            if isinstance(value, (dict, list)) and column in {
+                "trace",
+                "metadata",
+            }:
+                params[column] = orjson.dumps(value).decode()
+            else:
+                params[column] = value
+
+        session = self.session()
+
+        try:
+
+            session.execute(
+                text(
+                    f"""
+                    UPDATE traces
+                    SET {assignments}
+                    WHERE id = :id
+                    """
+                ),
+                params,
             )
 
             self.commit(session)

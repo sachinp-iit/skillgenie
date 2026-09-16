@@ -8,16 +8,40 @@
 # License      : MIT
 # ============================================================================
 
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+from uuid import UUID, uuid4
+
 from skillgenie.config import Config
+from skillgenie.constants import SkillStatus
+from skillgenie.core.health import SkillHealthEngine
+from skillgenie.core.lifecycle import SkillLifecycle
+from skillgenie.core.scorer import SkillScorer
 from skillgenie.database.manager import DatabaseManager
+from skillgenie.database.repositories.audit_repository import AuditRepository
 from skillgenie.database.repositories.capability_repository import (
     CapabilityRepository,
+)
+from skillgenie.database.repositories.execution_repository import (
+    ExecutionRepository,
 )
 from skillgenie.database.repositories.metrics_repository import (
     MetricsRepository,
 )
 from skillgenie.models.capability import Capability
 from skillgenie.utils.logger import Logger
+
+# Ordering used to prevent demotion during evaluation.
+_STATUS_RANK = {
+    SkillStatus.DRAFT: 0,
+    SkillStatus.CANDIDATE: 1,
+    SkillStatus.APPROVED: 2,
+    SkillStatus.PUBLISHED: 3,
+    SkillStatus.DEPRECATED: 4,
+    SkillStatus.ARCHIVED: 5,
+}
 
 
 class SkillEvaluator:
@@ -29,6 +53,11 @@ class SkillEvaluator:
         self,
         config: Config,
         database: DatabaseManager,
+        skill_repository: CapabilityRepository | None = None,
+        metrics_repository: MetricsRepository | None = None,
+        audit_repository: AuditRepository | None = None,
+        execution_repository: ExecutionRepository | None = None,
+        scorer: SkillScorer | None = None,
     ):
         """
         Initialize Skill Evaluator.
@@ -36,22 +65,43 @@ class SkillEvaluator:
         Args:
             config: SkillGenie configuration.
             database: Database manager.
+            skill_repository: Optional repository override.
+            metrics_repository: Optional repository override.
+            audit_repository: Optional repository override.
+            execution_repository: Optional repository override.
+            scorer: Optional scoring engine override.
         """
 
-        # Store dependencies
         self._config = config
         self._database = database
 
-        # Initialize logger
         self._logger = Logger(config).log
 
-        # Initialize repositories
-        self._skill_repository = CapabilityRepository(
-            database
+        self._skill_repository = (
+            skill_repository or CapabilityRepository(database)
         )
 
-        self._metrics_repository = MetricsRepository(
-            database
+        self._metrics_repository = (
+            metrics_repository or MetricsRepository(database)
+        )
+
+        self._audit_repository = (
+            audit_repository or AuditRepository(database)
+        )
+
+        self._execution_repository = (
+            execution_repository or ExecutionRepository(database)
+        )
+
+        self._scorer = scorer or SkillScorer(config)
+
+        self._health_engine = SkillHealthEngine(config)
+
+        self._lifecycle = SkillLifecycle(
+            config=config,
+            database=database,
+            skill_repository=self._skill_repository,
+            audit_repository=self._audit_repository,
         )
 
     def evaluate(
@@ -72,161 +122,175 @@ class SkillEvaluator:
             f"Evaluating skill '{skill.name}'."
         )
 
-        # Calculate confidence score
-        skill.confidence_score = (
-            self._calculate_confidence(skill)
-        )
+        skill.confidence_score = self._scorer.confidence_score(skill)
+        skill.quality_score = self._scorer.quality_score(skill)
+        skill.success_rate = self._calculate_success_rate(skill)
+        skill.health = self._health_engine.health(skill)
 
-        # Calculate quality score
-        skill.quality_score = (
-            self._calculate_quality(skill)
-        )
+        self._persist_scores(skill)
 
-        # Calculate success rate
-        skill.success_rate = (
-            self._calculate_success_rate(skill)
-        )
-
-        # Determine lifecycle status
-        skill.status = (
-            self._determine_status(skill)
-        )
-
-        # Persist evaluation metrics
         self._save_metrics(skill)
+
+        target_status = self._determine_status(skill)
+
+        self._promote(skill=skill, target=target_status)
+
+        if target_status is not None:
+            skill.status = target_status
+
+        self._audit(
+            capability_id=skill.id,
+            action="EVALUATED",
+            remarks=(
+                f"confidence={skill.confidence_score}, "
+                f"quality={skill.quality_score}, "
+                f"success_rate={skill.success_rate}"
+            ),
+            payload={
+                "confidence_score": skill.confidence_score,
+                "quality_score": skill.quality_score,
+                "success_rate": skill.success_rate,
+                "health": skill.health.value,
+            },
+        )
 
         self._logger.info(
             f"Evaluation completed for '{skill.name}'."
         )
 
         return skill
-    
-    def _calculate_confidence(
-        self,
-        skill: Capability,
-    ) -> float:
+
+    def _persist_scores(self, skill: Capability) -> None:
         """
-        Calculate confidence score.
+        Persist computed scores to the capability row.
         """
 
-        self._logger.debug(
-            f"Calculating confidence score for '{skill.name}'."
+        self._skill_repository.update(
+            capability_id=skill.id,
+            confidence_score=skill.confidence_score,
+            quality_score=skill.quality_score,
+            success_rate=skill.success_rate,
+            health=skill.health.value,
+            updated_at=datetime.utcnow(),
         )
-
-        score = 0.0
-
-        if skill.workflow:
-            score += 0.30
-
-        if skill.metadata.get("tools"):
-            score += 0.20
-
-        if skill.metadata.get("prompts"):
-            score += 0.20
-
-        if skill.metadata.get("input_output"):
-            score += 0.20
-
-        if skill.metadata:
-            score += 0.10
-
-        return round(score, 3)
-
-    def _calculate_quality(
-        self,
-        skill: Capability,
-    ) -> float:
-        """
-        Calculate quality score.
-        """
-
-        self._logger.debug(
-            f"Calculating quality score for '{skill.name}'."
-        )
-
-        score = 0.0
-
-        if skill.description:
-            score += 0.20
-
-        if skill.category:
-            score += 0.20
-
-        if skill.workflow:
-            score += 0.40
-
-        if skill.relationship_graph:
-            score += 0.20
-
-        return round(score, 3)
 
     def _calculate_success_rate(
         self,
         skill: Capability,
     ) -> float:
         """
-        Calculate initial success rate.
+        Compute success rate from recorded executions.
+
+        Freshly-created skills default to 1.0 because they originate from a
+        successful execution trace.
         """
 
-        self._logger.debug(
-            f"Calculating success rate for '{skill.name}'."
+        executions = self._execution_repository.get_by_capability(
+            skill.id
         )
 
-        return 1.0
+        if not executions:
+            return 1.0
+
+        successful = 0
+
+        for execution in executions:
+            status = execution.get("execution_status", "")
+
+            if status == "SUCCESS":
+                successful += 1
+
+        if len(executions) == 0:
+            return 1.0
+
+        return round(successful / len(executions), 3)
 
     def _determine_status(
         self,
         skill: Capability,
-    ):
+    ) -> SkillStatus | None:
         """
-        Determine skill lifecycle status.
+        Determine the lifecycle status for the evaluated skill.
+
+        Returns None when no change is required.
         """
 
-        self._logger.debug(
-            f"Determining lifecycle state for '{skill.name}'."
+        current = skill.status
+
+        if self._config.get_bool("learning.auto_approval", False):
+            auto_approve_threshold = self._config.get_float(
+                "similarity.auto_approval_threshold",
+                0.95,
+            )
+
+            if skill.confidence_score >= auto_approve_threshold:
+                return (
+                    SkillStatus.PUBLISHED
+                    if self._config.get_bool(
+                        "learning.auto_publish",
+                        False,
+                    )
+                    else SkillStatus.APPROVED
+                )
+
+        candidate_threshold = self._config.get_float(
+            "learning.candidate_threshold",
+            0.55,
         )
 
-        return skill.status
+        if skill.confidence_score >= candidate_threshold:
+            return SkillStatus.CANDIDATE
 
-    def _save_metrics(
+        return current
+
+    def _promote(
         self,
         skill: Capability,
+        target: SkillStatus | None,
     ) -> None:
         """
-        Persist evaluation metrics.
+        Promote a skill through lifecycle transitions until the target status
+        is reached. Never demotes.
         """
 
-        self._logger.debug(
-            f"Persisting metrics for '{skill.name}'."
-        )
+        if target is None or target == skill.status:
+            return
 
-        # Metrics repository implementation will be
-        # integrated after the scoring engine is completed.
-        
+        if _STATUS_RANK[target] <= _STATUS_RANK[skill.status]:
+            return
+
+        steps: list[SkillStatus] = []
+
+        if skill.status == SkillStatus.DRAFT and target != SkillStatus.DRAFT:
+            steps.append(SkillStatus.CANDIDATE)
+
+        if (
+            skill.status != SkillStatus.APPROVED
+            and _STATUS_RANK[target] >= _STATUS_RANK[SkillStatus.APPROVED]
+        ):
+            steps.append(SkillStatus.APPROVED)
+
+        if target == SkillStatus.PUBLISHED:
+            steps.append(SkillStatus.PUBLISHED)
+
+        for step in steps:
+            self._lifecycle.transition(str(skill.id), step)
+
     def approve(
         self,
         skill: Capability,
     ) -> Capability:
         """
         Approve a skill.
-
-        Args:
-            skill: Skill to approve.
-
-        Returns:
-            Updated skill.
         """
 
         self._logger.info(
             f"Approving skill '{skill.name}'."
         )
 
-        skill.status = self._determine_status(skill)
+        self._lifecycle.approve(str(skill.id))
 
-        self._skill_repository.update(
-            capability_id=skill.id,
-            status=skill.status.value,
-        )
+        skill.status = SkillStatus.APPROVED
 
         return skill
 
@@ -237,25 +301,16 @@ class SkillEvaluator:
     ) -> Capability:
         """
         Reject a generated skill.
-
-        Args:
-            skill: Skill to reject.
-            reason: Rejection reason.
-
-        Returns:
-            Updated skill.
         """
 
         self._logger.warning(
-            f"Rejecting skill '{skill.name}'."
+            f"Rejecting skill '{skill.name}': {reason}"
         )
 
+        self._lifecycle.reject(str(skill.id), reason)
+
+        skill.status = SkillStatus.DRAFT
         skill.metadata["rejection_reason"] = reason
-
-        self._skill_repository.update(
-            capability_id=skill.id,
-            metadata=skill.metadata,
-        )
 
         return skill
 
@@ -265,22 +320,15 @@ class SkillEvaluator:
     ) -> Capability:
         """
         Publish a skill.
-
-        Args:
-            skill: Skill to publish.
-
-        Returns:
-            Published skill.
         """
 
         self._logger.info(
             f"Publishing skill '{skill.name}'."
         )
 
-        self._skill_repository.update(
-            capability_id=skill.id,
-            status=skill.status.value,
-        )
+        self._lifecycle.publish(str(skill.id))
+
+        skill.status = SkillStatus.PUBLISHED
 
         return skill
 
@@ -290,12 +338,6 @@ class SkillEvaluator:
     ) -> Capability:
         """
         Re-evaluate an existing skill.
-
-        Args:
-            skill: Existing skill.
-
-        Returns:
-            Updated skill.
         """
 
         self._logger.info(
@@ -303,3 +345,41 @@ class SkillEvaluator:
         )
 
         return self.evaluate(skill)
+
+    def _save_metrics(
+        self,
+        skill: Capability,
+    ) -> None:
+        """
+        Persist evaluation metrics.
+        """
+
+        self._metrics_repository.create(
+            metric_id=uuid4(),
+            capability_id=skill.id,
+            confidence_score=skill.confidence_score,
+            quality_score=skill.quality_score,
+            success_rate=skill.success_rate,
+            avg_latency_ms=skill.avg_latency_ms,
+            usage_count=skill.usage_count,
+        )
+
+    def _audit(
+        self,
+        capability_id: UUID,
+        action: str,
+        remarks: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Write an audit entry.
+        """
+
+        self._audit_repository.create(
+            audit_id=uuid4(),
+            capability_id=capability_id,
+            action=action,
+            performed_by="evaluator",
+            remarks=remarks,
+            payload=payload or {},
+        )

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SkillGenie – Admin</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f1f5f9;color:#0f172a;padding:2rem}
+h1{font-size:1.75rem;margin-bottom:1.5rem}
+.controls{display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap}
+button{background:#0ea5e9;color:#fff;border:none;border-radius:6px;padding:.5rem 1rem;cursor:pointer;font-size:.9rem}
+button.danger{background:#ef4444}
+button.warn{background:#f59e0b}
+button.ok{background:#10b981}
+button.secondary{background:#94a3b8}
+input,select{padding:.5rem;border:1px solid #cbd5e1;border-radius:6px;font-size:.9rem}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem;margin-bottom:2rem}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem}
+.card h3{font-size:1.05rem;margin-bottom:.4rem;color:#1e40af}
+.badge{display:inline-block;font-size:.75rem;padding:2px 8px;border-radius:20px;margin-right:6px;color:#fff}
+.badge.PUBLISHED{background:#10b981}
+.badge.APPROVED{background:#0ea5e9}
+.badge.CANDIDATE{background:#f59e0b}
+.badge.DRAFT{background:#94a3b8}
+.badge.DEPRECATED{background:#ef4444}
+.badge.ARCHIVED{background:#6b7280}
+.metric{font-size:.85rem;color:#475569;margin-bottom:.25rem}
+.actions{margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap}
+.actions button{font-size:.78rem;padding:.35rem .7rem}
+#pending-list{margin-bottom:2rem}
+.toast{position:fixed;top:1rem;right:1rem;padding:.75rem 1.25rem;background:#10b981;color:#fff;border-radius:8px;opacity:0;transition:opacity .3s}
+.show{opacity:1}
+</style>
+</head>
+<body>
+<h1>SkillGenie – Admin Dashboard</h1>
+<div id="toast" class="toast"></div>
+
+<div class="controls">
+  <button onclick="load()">Refresh</button>
+  <button onclick="showLearnDialog()">Learn from Trace</button>
+  <input id="search" placeholder="Search skills..." oninput="filterCards()">
+</div>
+
+<section id="pending-list">
+  <h2 style="margin-bottom:.75rem">Pending Approval</h2>
+  <div id="pending"></div>
+</section>
+
+<h2 style="margin-bottom:.75rem">All Skills</h2>
+<div id="skills" class="card-grid"></div>
+
+<div id="dialog" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:2rem;min-width:320px">
+    <h3>Learn from Trace</h3>
+    <input id="trace-id" placeholder="Trace ID" style="width:100%;margin-top:.75rem">
+    <div style="margin-top:1rem;display:flex;gap:.5rem;justify-content:flex-end">
+      <button class="secondary" onclick="hideDialog()">Cancel</button>
+      <button onclick="learnFromTrace()">Learn</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1';
+let allSkills = [];
+
+async function api(path, opts) {
+  const res = await fetch(API + path, opts);
+  if (!res.ok && res.status !== 204) throw new Error(await res.text());
+  return res.status === 204 ? null : res.json();
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+function badge(status) {
+  return `<span class="badge ${status}">${status}</span>`;
+}
+
+function renderCard(skill) {
+  return `<div class="card" data-id="${skill.id}">
+    <h3>${skill.name}</h3>
+    <div style="margin-bottom:.5rem">${badge(skill.status)}</div>
+    <div class="metric">Category: ${skill.category || 'general'}  ·  v${skill.version}</div>
+    <div class="metric">Confidence: ${skill.confidence_score}  ·  Quality: ${skill.quality_score}  ·  Usage: ${skill.usage_count}</div>
+    <div class="metric" style="margin-top:.5rem;color:#1e293b">${(skill.description||'').slice(0,140)}${(skill.description||'').length>140?'…':''}</div>
+    <div class="actions">
+      <button class="ok" onclick="action('${skill.id}','approve')">Approve</button>
+      <button onclick="action('${skill.id}','publish')">Publish</button>
+      <button class="warn" onclick="action('${skill.id}','deprecate')">Deprecate</button>
+      <button class="secondary" onclick="action('${skill.id}','archive')">Archive</button>
+      <button class="secondary" onclick="action('${skill.id}','restore')">Restore</button>
+      <button class="danger" onclick="reject('${skill.id}')">Reject</button>
+      <button class="secondary" onclick="showMetrics('${skill.id}','${skill.name}')">Metrics</button>
+    </div>
+  </div>`;
+}
+
+function renderSkills(skills) {
+  document.getElementById('skills').innerHTML = skills.map(renderCard).join('');
+  const pending = skills.filter(s => s.status === 'CANDIDATE' || s.status === 'DRAFT');
+  document.getElementById('pending').innerHTML = pending.length
+    ? pending.map(renderCard).join('')
+    : '<div style="color:#64748b">No skills awaiting approval.</div>';
+}
+
+async function load() {
+  allSkills = await api('/skills');
+  renderSkills(allSkills);
+  toast('Loaded');
+}
+
+function filterCards() {
+  const q = document.getElementById('search').value.toLowerCase();
+  renderSkills(allSkills.filter(s =>
+    (s.name||'').toLowerCase().includes(q) ||
+    (s.description||'').toLowerCase().includes(q) ||
+    (s.category||'').toLowerCase().includes(q)
+  ));
+}
+
+async function action(id, action) {
+  if (!confirm(`Perform ${action}?`)) return;
+  await api(`/skills/${id}/${action}`, {method:'POST'});
+  toast(`${action} done`);
+  load();
+}
+
+async function reject(id) {
+  const reason = prompt('Rejection reason:');
+  if (reason === null) return;
+  await api(`/skills/${id}/reject`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({reason})});
+  toast('Rejected');
+  load();
+}
+
+function showLearnDialog() {
+  document.getElementById('dialog').style.display = 'flex';
+}
+function hideDialog() {
+  document.getElementById('dialog').style.display = 'none';
+}
+
+async function learnFromTrace() {
+  const tid = document.getElementById('trace-id').value.trim();
+  if (!tid) return;
+  try {
+    const skill = await api('/learn', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({trace_id: tid})});
+    hideDialog();
+    toast(`Learned: ${skill.name}`);
+    load();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function showMetrics(id, name) {
+  const metrics = await api(`/metrics/skills/${id}`);
+  const html = metrics.map(m => `<div>${m.recorded_at} – conf:${m.confidence_score} qual:${m.quality_score} usage:${m.usage_count}</div>`).join('');
+  alert(`Metrics for ${name}:\n\n${html || 'No metrics.'}`);
+}
+
+load();
+</script>
+</body>
+</html>

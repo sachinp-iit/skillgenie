@@ -180,4 +180,66 @@ def create_indexes(database: DatabaseManager) -> None:
             )
         )
 
+        # ---------------------------------------------------------------------
+        # Execution Indexes
+        # ---------------------------------------------------------------------
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_executions_capability
+                ON executions(capability_id);
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_executions_status
+                ON executions(execution_status);
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_executions_started_at
+                ON executions(started_at DESC);
+                """
+            )
+        )
+
+        # ---------------------------------------------------------------------
+        # Recommendation Indexes
+        # ---------------------------------------------------------------------
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_recommendations_capability
+                ON recommendations(capability_id);
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_recommendations_ranking
+                ON recommendations(ranking_score DESC);
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_recommendations_recommended_at
+                ON recommendations(recommended_at DESC);
+                """
+            )
+        )
+
     print("Database indexes created successfully.")

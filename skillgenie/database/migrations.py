@@ -27,3 +27,5 @@ def migrate(database: DatabaseManager) -> None:
     create_indexes(database)
 
     print("Database migration completed successfully.")
+
+    return True

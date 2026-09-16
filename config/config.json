@@ -1,0 +1,42 @@
+{
+    "database": {
+        "url": "postgresql+psycopg://postgres:password@localhost:5432/skillgenie"
+    },
+    "logging": {
+        "level": "INFO"
+    },
+    "embeddings": {
+        "provider": "sentence-transformers",
+        "model": "BAAI/bge-small-en-v1.5",
+        "dimensions": 384,
+        "batch_size": 32
+    },
+    "openrouter": {
+        "api_key": "",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "openai/gpt-4.1-mini"
+    },
+    "similarity": {
+        "threshold": 0.85,
+        "auto_approval_threshold": 0.95,
+        "recommendation_threshold": 0.80
+    },
+    "learning": {
+        "enabled": true,
+        "auto_approval": false,
+        "auto_publish": false,
+        "min_execution_count": 5,
+        "min_success_rate": 0.9,
+        "candidate_threshold": 0.55,
+        "mode": "AUTOMATIC"
+    },
+    "monitoring": {
+        "enabled": true,
+        "interval_seconds": 60
+    },
+    "api": {
+        "host": "127.0.0.1",
+        "port": 8000,
+        "debug": false
+    }
+}

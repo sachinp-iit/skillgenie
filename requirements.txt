@@ -30,6 +30,10 @@ orjson>=3.11.0
 # Logging
 loguru>=0.7.3
 
+# REST API
+fastapi>=0.111.0
+uvicorn>=0.30.0
+
 # Utilities
 tqdm>=4.67.0
 
@@ -38,3 +42,4 @@ pytest>=8.4.0
 black>=25.1.0
 ruff>=0.12.0
 mypy>=1.17.0
+httpx>=0.27.0
