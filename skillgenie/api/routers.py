@@ -15,11 +15,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from skillgenie.api.dependencies import get_engine
 from skillgenie.api.schemas import (
+    ArenaBattleRequest,
     ExecutionCreate,
     LearnRequest,
     OutcomeCreate,
+    PlanExecuteRequest,
+    PlanRequest,
     RecommendRequest,
     RejectRequest,
+    RemediateRequest,
     SecretSet,
     SkillUpdate,
     TraceCreate,
@@ -551,6 +555,17 @@ def monitor_overview(engine: SkillGenie = Depends(get_engine)):
     return engine.health_overview()
 
 
+@router.get("/monitor/gaps")
+def registry_gaps(
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Registry coverage gaps, tool gaps and novelty opportunities.
+    """
+
+    return engine.analyze_gaps()
+
+
 @router.get("/monitor/governance")
 def governance_status(engine: SkillGenie = Depends(get_engine)):
     """
@@ -695,6 +710,63 @@ def skill_health_explanation(
     return explanation
 
 
+@router.get("/skills/{skill_id}/validate")
+def validate_skill(
+    skill_id: str,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Readiness validation report for a skill.
+    """
+
+    try:
+        report = engine.validate_skill(UUID(skill_id))
+    except SkillGenieError as exc:
+        raise _error(exc)
+
+    return report
+
+
+@router.get("/skills/{skill_id}/provenance")
+def skill_provenance(
+    skill_id: str,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Provenance dossier and explainability narrative for a skill.
+    """
+
+    try:
+        dossier = engine.skill_provenance(UUID(skill_id))
+    except SkillGenieError as exc:
+        raise _error(exc)
+
+    return dossier
+
+
+@router.post("/skills/{skill_id}/remediate")
+def remediate_skill(
+    skill_id: str,
+    payload: RemediateRequest | None = None,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Assess a skill and apply autonomous remediation actions.
+    """
+
+    payload = payload or RemediateRequest()
+
+    try:
+        return engine.remediate(
+            skill_id=UUID(skill_id),
+            mode=payload.mode,
+            force=payload.force,
+            actor=payload.actor,
+        )
+    except SkillGenieError as exc:
+        raise _error(exc)
+
+
 # ---------------------------------------------------------------------------
 # MCP Export & Governance
 # ---------------------------------------------------------------------------
@@ -703,20 +775,25 @@ def skill_health_explanation(
 @router.get("/export/{skill_id}")
 def export_skill(
     skill_id: str,
+    format: str = "mcp",
+    directory: str | None = None,
     engine: SkillGenie = Depends(get_engine),
 ):
     """
-    Export a skill as a standalone MCP tool definition.
+    Export a skill (claude/openai/bundle/mcp), optionally publishing it to a
+    marketplace catalog directory.
     """
 
-    from skillgenie.mcp.server import SkillGenieMCPServer
-
     try:
-        return SkillGenieMCPServer(engine=engine)._export(
-            {"skill_id": skill_id}
+        return engine.export_skill(
+            skill_id=UUID(skill_id),
+            fmt=format,
+            output_dir=directory,
         )
+    except SkillGenieError as exc:
+        raise _error(exc)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/governance/secrets", status_code=201)
@@ -740,3 +817,74 @@ def list_secrets(engine: SkillGenie = Depends(get_engine)):
     """
 
     return {"names": engine.governance.vault.list_names()}
+
+
+@router.post("/plan", response_model=dict)
+def compose_plan(
+    payload: PlanRequest,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Compose a multi-skill plan for a composite task.
+    """
+
+    return engine.compose(
+        task=payload.task,
+        top_k=payload.top_k,
+        status=payload.status,
+    )
+
+
+@router.post("/plan/execute", response_model=dict)
+def execute_plan(
+    payload: PlanExecuteRequest,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Plan, execute and optionally learn a composite task.
+    """
+
+    return engine.execute_plan(
+        task=payload.task,
+        top_k=payload.top_k,
+        status=payload.status,
+        learn=payload.learn,
+    )
+
+
+# ---------------------------------------------------------------------------
+# SkillGenie Arena
+# ---------------------------------------------------------------------------
+
+
+@router.post("/arena/battle", response_model=dict)
+def arena_battle(
+    payload: ArenaBattleRequest,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Run a head-to-head skill battle in the arena.
+    """
+
+    try:
+        return engine.arena_battle(
+            task=payload.task,
+            skill_a=UUID(payload.skill_a),
+            skill_b=UUID(payload.skill_b),
+            rounds=payload.rounds,
+            failure_rate=payload.failure_rate,
+        )
+    except SkillGenieError as exc:
+        raise _error(exc)
+
+
+@router.get("/arena/leaderboard")
+def arena_leaderboard(
+    limit: int = 10,
+    engine: SkillGenie = Depends(get_engine),
+):
+    """
+    Arena ELO leaderboard.
+    """
+
+    return {"leaderboard": engine.arena_leaderboard(limit=limit)}

@@ -30,6 +30,14 @@ Instead of manually hardcoding workflows, SkillGenie continuously learns from su
 - Benchmark Harness
 - Outcome Feedback Loop & Drift Detection
 - Enterprise Governance (privacy, secret vault, explainability)
+- Compositional Multi-Skill Planning
+- Learned Recommendation Ranking (bandit / ELO-style fits)
+- Skill Validation & Readiness Scoring
+- Autonomous Drift Remediation
+- Gap & Novelty Discovery
+- Skill Marketplace & Claude / OpenAI / MCP Exports
+- Provenance & Explainability Dossiers
+- SkillGenie Arena (head-to-head battles + ELO leaderboard)
 
 ---
 
@@ -128,7 +136,8 @@ python -m pytest tests -q
 usage: skillgenie [-h] {init-db,ingest,learn,learn-all,relearn,list,show,recommend,
                    approve,reject,publish,deprecate,archive,restore,exec,health,
                    search,api,outcome,drift,failures,explain,export,mcp,governance,
-                   benchmark} ...
+                   benchmark,plan,plan-execute,validate,remediate,gaps,provenance,
+                   arena} ...
 ```
 
 Examples:
@@ -151,14 +160,34 @@ skillgenie drift <skill-id>
 skillgenie failures <skill-id>
 skillgenie explain <skill-id>
 
-# Export a skill as a standalone MCP tool
-skillgenie export <skill-id>
+# Export a skill (claude / openai / bundle / mcp)
+skillgenie export <skill-id> --format bundle --output ./exports
 
 # Enterprise governance summary
 skillgenie governance
 
 # Run the benchmark suite (no database required)
 skillgenie benchmark
+
+# Compose and execute a multi-skill plan
+skillgenie plan "plan a software project"
+skillgenie plan-execute "plan a software project"
+
+# Validate a skill and get readiness verdict + actionable next steps
+skillgenie validate <skill-id>
+
+# Autonomously remediate a drifting/failing skill
+skillgenie remediate <skill-id> --mode auto
+
+# Discover gaps, novelty opportunities and redundancy
+skillgenie gaps
+
+# Provenance & explainability dossier
+skillgenie provenance <skill-id>
+
+# SkillGenie Arena: battle two skills, then view the ELO leaderboard
+skillgenie arena battle "research a topic" --skill-a <id> --skill-b <id> --rounds 5
+skillgenie arena rank
 
 # Serve the MCP server over stdio
 skillgenie mcp --port 3100
@@ -191,7 +220,15 @@ Start the API with `skillgenie api` (or `uvicorn skillgenie.api.app:create_app -
 | `GET /api/v1/skills/{skill_id}/drift` | Drift detection |
 | `GET /api/v1/skills/{skill_id}/failures` | Recent failures |
 | `GET /api/v1/skills/{skill_id}/health/explain` | Explainable health score |
-| `GET /api/v1/export/{skill_id}` | Export skill as MCP tool |
+| `GET /api/v1/export/{skill_id}` | Export skill (claude/openai/bundle/mcp) |
+| `POST /api/v1/plan` | Compose a multi-skill plan |
+| `POST /api/v1/plan/execute` | Plan, execute and optionally learn |
+| `GET /api/v1/skills/{skill_id}/validate` | Validation verdict + readiness score |
+| `POST /api/v1/skills/{skill_id}/remediate` | Autonomous drift remediation |
+| `GET /api/v1/monitor/gaps` | Gap / novelty / redundancy analysis |
+| `GET /api/v1/skills/{skill_id}/provenance` | Provenance dossier |
+| `POST /api/v1/arena/battle` | Head-to-head skill battle |
+| `GET /api/v1/arena/leaderboard` | Arena ELO leaderboard |
 | `POST /api/v1/governance/secrets` | Store a secret in the vault |
 | `GET /api/v1/governance/secrets` | List vault secrets |
 | `POST /api/v1/traces` | Create a trace |
@@ -240,6 +277,9 @@ Configuration sections include:
 | Section | Purpose |
 |---------|---------|
 | `feedback` | Outcome window and drift threshold (`drift_threshold`, `drift_window_hours`) |
+| `recommendation` | Top-K / score weight / fallback behavior |
+| `ranking` | Learned ranking mode + bandit/recency/latency fit weights |
+| `arena` | Arena leaderboard persistence path |
 | `mcp` | MCP server host/port |
 | `integrations` | Framework recording hooks toggle |
 | `benchmark` | Benchmark task success overlap |
@@ -264,6 +304,25 @@ skillgenie/
 │   │   ├── evolution.py
 │   │   ├── feedback.py
 │   │   ├── execution_service.py
+│   │   ├── ranking.py
+│   │   ├── validator.py
+│   │   ├── remediator.py
+│   │   ├── gaps.py
+│   │   ├── provenance.py
+│   │   └── __init__.py
+│   │
+│   ├── arena/
+│   │   ├── agent.py
+│   │   ├── battle.py
+│   │   └── __init__.py
+│   │
+│   ├── marketplace/
+│   │   ├── exporters.py
+│   │   ├── marketplace.py
+│   │   └── __init__.py
+│   │
+│   ├── planning/
+│   │   ├── composer.py
 │   │   └── __init__.py
 │   │
 │   ├── api/
@@ -345,6 +404,7 @@ skillgenie/
 │   │   ├── execution.py
 │   │   ├── metrics.py
 │   │   ├── outcome.py
+│   │   ├── plan.py
 │   │   ├── recommendation.py
 │   │   ├── trace.py
 │   │   └── __init__.py
@@ -389,8 +449,8 @@ skillgenie/
 
 # Current Progress
 
-All core, API and dashboard features are implemented and covered by a mock-based
-test suite (**174 tests passing**).
+All core, API, dashboard, benchmark and pro features are implemented and
+covered by a mock-based test suite (**231 tests passing**).
 
 ## Completed
 
@@ -455,6 +515,33 @@ test suite (**174 tests passing**).
 - Benchmark Harness (A/B measures, latency + success deltas)
 - Governance (PII redaction, data residency, encrypted secret vault)
 - Comprehensive Mock-Based Test Suite (PostgreSQL not required)
+
+### Intelligent & Autonomous Features
+
+- **Compositional Planner** — `TaskDecomposer` + `CompositePlanner` break composite
+  tasks into ordered sub-tasks, map them to the best skills, and assemble a
+  dependency-aware plan (`framework: "composite"`).
+- **Learned Recommendation Ranking** — `LearnedRanker` re-ranks recommendations
+  using outcome-based bandit fits, recency decay, latency health and configurable
+  fit weights; `ranking.mode` supports `classic | fit | bandit | learned | hybrid`.
+- **Skill Validation Harness** — `SkillValidator` grades 10+ checks (progressions,
+  outcomes, health, documentation, workflow integrity) into an actionable
+  `READY / NEEDS_WORK / INVALID` verdict with `readiness_score`.
+- **Autonomous Drift Remediation** — `SkillRemediator` detects failings skills and
+  applies low-risk remediation (`flag_review`, `suppress_recommendations`, and
+  forced `retrain` / `deprecate`) with full audit trail.
+- **Gap & Novelty Discovery** — `SkillGapAnalyzer` surfaces low-coverage
+  categories, missing tools vs. recent traces, novelty opportunities and
+  redundancy.
+- **Skill Marketplace** — publish a catalog index and export any skill as
+  Claude (`*.claude.md`), OpenAI (`*.openai.json`), bundle (`*.bundle.json`) or
+  MCP (`*.mcp.json`).
+- **Provenance & Explainability** — `SkillProvenance` reconstructs a skill's
+  lineage (source traces), attribution (audit trail) and outcomes, with a
+  human-readable narrative.
+- **SkillGenie Arena** — `ArenaAgent` simulates skills under tool-failure stress,
+  and `SkillGenieArena` runs head-to-head battles scoring success, efficiency
+  and resilience with ELO ratings persisted to a leaderboard.
 
 ---
 
@@ -543,6 +630,105 @@ engine = SkillGenie(config_file="config/config.json")
 print(engine.governance_report())
 ```
 
+## Intelligent & Autonomous Features
+
+### Compositional Multi-Skill Planning
+
+Decompose composite tasks, map steps to skills, and (optionally) execute the
+plan end-to-end with learned composite skills:
+
+```bash
+skillgenie plan "plan a software project"
+skillgenie plan-execute "plan a software project"
+```
+
+The engine exposes `engine.compose(task, top_k, status)` returning ordered
+sub-tasks, selected skills and an executable plan.
+
+### Learned Recommendation Ranking
+
+Re-rank recommendations from outcome feedback instead of static scores:
+
+```python
+from skillgenie import SkillGenie
+
+engine = SkillGenie(config_file="config/config.json")
+engine.config.set("ranking.mode", "hybrid")
+
+results = engine.recommend("search the web for product reviews")
+for hit in results["results"]:
+    print(hit["skill"]["name"], hit["reason"], hit.get("learned_score"))
+```
+
+Modes: `classic` (no re-ranking), `fit` (dot-product fit rank), `bandit`
+(Thompson-style success pulls), `learned` (hybrid without classic relevance)
+and `hybrid` (all signals).
+
+### Skill Validation Harness
+
+Grade a skill against lifecycle, outcomes, health, documentation and workflow
+integrity checks into an actionable verdict:
+
+```bash
+skillgenie validate <skill-id>       # READY / NEEDS_WORK / INVALID
+```
+
+Returns `readiness_score`, per-check results and suggested next actions.
+
+### Autonomous Drift Remediation
+
+When a skill falls behind its `drift_threshold`, remediate automatically with
+safe, reversible actions and a full audit trail:
+
+```bash
+skillgenie remediate <skill-id> --mode auto
+skillgenie remediate <skill-id> --mode review --force   # allows retrain/deprecate
+```
+
+### Gap & Novelty Discovery
+
+Analyze registry coverage vs. recent agent traces to find missing categories,
+absent tools, novelty opportunities and redundancy:
+
+```bash
+skillgenie gaps
+```
+
+### Skill Marketplace & Exports
+
+Publish a catalog and export skills to external ecosystems:
+
+```bash
+skillgenie export <skill-id> --format bundle --output ./exports
+```
+
+Formats: `claude` (`{slug}.claude.md`), `openai` (`{slug}.openai.json`),
+`bundle` (`{slug}.bundle.json`), `mcp` (`{slug}.mcp.json`) plus a
+`marketplace.index.json` catalog with sha256 digests.
+
+### Provenance & Explainability
+
+Rebuild where a skill came from, who touched it, and why it is (or is not)
+trusted:
+
+```bash
+skillgenie provenance <skill-id>
+```
+
+Returns source traces, audit trail, outcome history and a narrative explanation.
+
+### SkillGenie Arena
+
+Battle two skills head-to-head under tool-failure stress and rank them by ELO:
+
+```bash
+skillgenie arena battle "research a topic" --skill-a <id> --skill-b <id> --rounds 5
+skillgenie arena rank
+```
+
+Scores combine success rate, efficiency and resilience; ratings and battle
+counts persist to `arena.leaderboard.json` (configurable via `arena.leaderboard_path`).
+
 ---
 
 # Development Status
@@ -550,8 +736,10 @@ print(engine.governance_report())
 Current Phase:
 
 **Feature Complete** — core engine, CLI, REST API, dashboards, MCP server,
-recording hooks, benchmark harness, feedback/drift loop and governance are
-implemented with a mock-based test suite.
+recording hooks, benchmark harness, feedback/drift loop, governance, and all
+eight intelligent features (planning, learned ranking, validation,
+remediation, gap discovery, marketplace, provenance, arena) are implemented
+with a mock-based test suite (231 tests passing).
 
 Next Milestones:
 

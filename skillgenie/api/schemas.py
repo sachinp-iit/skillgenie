@@ -114,8 +114,51 @@ class SecretSet(BaseModel):
 
 class ExportRequest(BaseModel):
     """
-    Skill export payload.
+    Skill export request.
     """
 
     skill_id: str
+
+
+class PlanRequest(BaseModel):
+    """
+    Compose a multi-skill plan for a composite task.
+    """
+
+    task: str
+    top_k: int = 3
+    status: str | None = None
+
+
+class PlanExecuteRequest(BaseModel):
+    """
+    Plan, execute and optionally learn a composite task.
+    """
+
+    task: str
+    top_k: int = 3
+    status: str | None = None
+    learn: bool = False
     format: str = "mcp"
+
+
+class RemediateRequest(BaseModel):
+    """
+    Remediation request for a drifting or failing skill.
+    """
+
+    mode: str = "auto"
+    force: bool = False
+    actor: str = "system"
+
+
+class ArenaBattleRequest(BaseModel):
+    """
+    Head-to-head skill battle in the SkillGenie Arena.
+    """
+
+    task: str
+    skill_a: str
+    skill_b: str
+    rounds: int = 5
+    failure_rate: float = 0.30

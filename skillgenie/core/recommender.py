@@ -17,9 +17,13 @@ from uuid import UUID, uuid4
 
 from skillgenie.config import Config
 from skillgenie.constants import RecommendationType, SkillStatus
+from skillgenie.core.ranking import LearnedRanker
 from skillgenie.database.manager import DatabaseManager
 from skillgenie.database.repositories.capability_repository import (
     CapabilityRepository,
+)
+from skillgenie.database.repositories.outcome_repository import (
+    OutcomeRepository,
 )
 from skillgenie.database.repositories.recommendation_repository import (
     RecommendationRepository,
@@ -43,6 +47,7 @@ class SkillRecommender:
         store: SkillStore | None = None,
         recommendation_repository: RecommendationRepository | None = None,
         trace_repository: TraceRepository | None = None,
+        outcome_repository: OutcomeRepository | None = None,
     ):
         """
         Initialize Skill Recommender.
@@ -53,6 +58,7 @@ class SkillRecommender:
             store: Optional skill store override.
             recommendation_repository: Optional repository override.
             trace_repository: Optional trace repository override.
+            outcome_repository: Optional outcome repository for learned ranking.
         """
 
         self._config = config
@@ -74,6 +80,13 @@ class SkillRecommender:
 
         self._trace_repository = (
             trace_repository or TraceRepository(database)
+        )
+
+        self._ranker = LearnedRanker(
+            config,
+            outcome_repository=(
+                outcome_repository or OutcomeRepository(database)
+            ),
         )
 
     def recommend(
@@ -108,7 +121,7 @@ class SkillRecommender:
 
         recommendations: list[Recommendation] = []
 
-        for candidate in candidates:
+        for candidate in self._ranker.reorder(candidates):
             recommendation = self._persist(candidate, query=query)
             recommendations.append(recommendation)
 
@@ -183,7 +196,7 @@ class SkillRecommender:
 
         recommendations: list[Recommendation] = []
 
-        for candidate in candidates:
+        for candidate in self._ranker.reorder(candidates):
             recommendation = self._persist(
                 candidate,
                 query=f"similar to:{skill.name}",
@@ -203,6 +216,20 @@ class SkillRecommender:
 
         skill = candidate["skill"]
 
+        ranking_score = float(candidate.get("learned_score", 0.0))
+        has_learned = "learned_score" in candidate
+
+        if not has_learned:
+            ranking_score = candidate["ranking"]
+
+        reason = candidate["reason"]
+
+        if has_learned and (candidate.get("context") or {}).get("mode"):
+            reason = (
+                f"ranked {ranking_score:.3f} "
+                f"({candidate['context']['mode']}): {reason}"
+            )
+
         recommendation = Recommendation(
             id=uuid4(),
             capability_id=skill.id,
@@ -211,11 +238,12 @@ class SkillRecommender:
             ),
             confidence_score=candidate["confidence_score"],
             similarity_score=candidate["similarity"],
-            ranking_score=candidate["ranking"],
-            reason=candidate["reason"],
+            ranking_score=ranking_score,
+            reason=reason,
             metadata={
                 "query": query,
                 "skill_name": skill.name,
+                "learned": candidate.get("context", {}),
             },
         )
 

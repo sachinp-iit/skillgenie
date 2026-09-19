@@ -137,9 +137,100 @@ def build_parser() -> argparse.ArgumentParser:
     explain = sub.add_parser("explain", help="Explain a skill's health score.")
     explain.add_argument("skill_id", help="Skill ID.")
 
+    # validate
+    validate = sub.add_parser("validate", help="Validate a skill for readiness.")
+    validate.add_argument("skill_id", help="Skill ID.")
+
     # export
-    export = sub.add_parser("export", help="Export a skill as an MCP tool.")
+    export = sub.add_parser(
+        "export",
+        help="Export a skill (claude/openai/bundle/mcp).",
+    )
     export.add_argument("skill_id", help="Skill ID.")
+    export.add_argument(
+        "--format",
+        default="mcp",
+        choices=["claude", "openai", "bundle", "mcp"],
+        help="Export format identifier.",
+    )
+    export.add_argument(
+        "--output",
+        default=None,
+        help="Publish into this marketplace catalog directory.",
+    )
+
+    # plan (compositional planner)
+    plan = sub.add_parser("plan", help="Compose a multi-skill plan for a task.")
+    plan.add_argument("task", help="Composite task description.")
+    plan.add_argument(
+        "--top", type=int, default=3, help="Skills to consider per step."
+    )
+
+    # plan-execute
+    plan_execute = sub.add_parser(
+        "plan-execute", help="Plan, execute and optionally learn a composite task."
+    )
+    plan_execute.add_argument("task", help="Composite task description.")
+    plan_execute.add_argument(
+        "--learn", action="store_true", help="Learn the composite as a new skill."
+    )
+    plan_execute.add_argument(
+        "--top", type=int, default=3, help="Skills to consider per step."
+    )
+
+    # remediate
+    remediate = sub.add_parser(
+        "remediate", help="Assess and remediate a drifting or failing skill."
+    )
+    remediate.add_argument("skill_id", help="Skill ID.")
+    remediate.add_argument(
+        "--mode",
+        default="auto",
+        choices=["auto", "review"],
+        help="auto applies reversible actions; review only reports.",
+    )
+    remediate.add_argument(
+        "--force",
+        action="store_true",
+        help="Also apply destructive actions (retrain/deprecate).",
+    )
+    remediate.add_argument(
+        "--actor", default="system", help="Identity for the audit trail."
+    )
+
+    # gaps
+    sub.add_parser(
+        "gaps",
+        help="Discover registry coverage gaps and novelty opportunities.",
+    )
+
+    # provenance
+    provenance = sub.add_parser(
+        "provenance",
+        help="Show a skill's lineage, attribution and explanation.",
+    )
+    provenance.add_argument("skill_id", help="Skill ID.")
+
+    # arena
+    arena = sub.add_parser(
+        "arena",
+        help="SkillGenie Arena: head-to-head skill battles.",
+    )
+    arena_sub = arena.add_subparsers(dest="arena_command")
+
+    battle = arena_sub.add_parser("battle", help="Run a skill battle.")
+    battle.add_argument("task", help="Task for the battle.")
+    battle.add_argument("--skill-a", required=True, help="First skill ID.")
+    battle.add_argument("--skill-b", required=True, help="Second skill ID.")
+    battle.add_argument("--rounds", type=int, default=5, help="Matches to run.")
+    battle.add_argument(
+        "--fail-rate",
+        type=float,
+        default=0.30,
+        help="Tool failure injection rate (0-1).",
+    )
+
+    arena_sub.add_parser("rank", help="Show the ELO leaderboard.")
 
     # mcp
     mcp = sub.add_parser("mcp", help="Start the MCP server (stdio).")
@@ -467,20 +558,52 @@ def cmd_explain(args, engine: SkillGenie) -> None:
     print(json.dumps(engine.health_explanation(UUID(args.skill_id)), indent=2))
 
 
-def cmd_export(args, engine: SkillGenie) -> None:
+def cmd_validate(args, engine: SkillGenie) -> None:
     """
-    Export a skill as an MCP tool.
+    Validate a skill for readiness.
     """
 
     from uuid import UUID
 
-    from skillgenie.mcp.server import SkillGenieMCPServer
+    report = engine.validate_skill(UUID(args.skill_id))
 
-    tool = SkillGenieMCPServer(engine=engine)._export(
-        {"skill_id": args.skill_id}
+    print(
+        f"\n{report['skill_name']} "
+        f"[{report['verdict']}] "
+        f"readiness={report['readiness_score']:.0%}\n"
     )
 
-    print(json.dumps(tool, indent=2, default=str))
+    for check in report["checks"]:
+        print(f"  {check['status']:<5} {check['id']:<28} {check['label']}")
+
+    if report["actionable"]:
+        print("\nActionable items:")
+        for item in report["actionable"]:
+            print(f"  - {item['id']}: {item['fix']}")
+
+
+def cmd_export(args, engine: SkillGenie) -> None:
+    """
+    Export a skill (claude/openai/bundle/mcp), optionally to a marketplace.
+    """
+
+    from uuid import UUID
+
+    artifact = engine.export_skill(
+        skill_id=UUID(args.skill_id),
+        fmt=args.format,
+        output_dir=args.output,
+    )
+
+    if args.output:
+        print(json.dumps(artifact, indent=2))
+        return
+
+    if isinstance(artifact, str):
+        print(artifact)
+        return
+
+    print(json.dumps(artifact, indent=2, default=str))
 
 
 def cmd_mcp(args) -> None:
@@ -506,6 +629,167 @@ def cmd_governance(args, engine: SkillGenie) -> None:
         return
 
     print(json.dumps(engine.governance_report(), indent=2))
+
+
+def cmd_plan(args, engine: SkillGenie) -> None:
+    """
+    Compose a multi-skill plan for a composite task.
+    """
+
+    plan = engine.compose(task=args.task, top_k=args.top)
+
+    print(json.dumps(plan, indent=2))
+
+
+def cmd_plan_execute(args, engine: SkillGenie) -> None:
+    """
+    Plan, execute and optionally learn a composite task.
+    """
+
+    payload = engine.execute_plan(
+        task=args.task,
+        top_k=args.top,
+        learn=args.learn,
+    )
+
+    print(json.dumps(payload, indent=2))
+
+
+def cmd_remediate(args, engine: SkillGenie) -> None:
+    """
+    Assess and remediate a drifting or failing skill.
+    """
+
+    from uuid import UUID
+
+    report = engine.remediate(
+        skill_id=UUID(args.skill_id),
+        mode=args.mode,
+        force=args.force,
+        actor=args.actor,
+    )
+
+    print(
+        f"\n{report['skill_name']} -> {report['state']} "
+        f"(health={report['health']})\n"
+    )
+
+    for action in report["actions"]:
+        marker = "[X]" if action["applied"] else "[ ]"
+        print(
+            f"  {marker} {action['action']:<26} "
+            f"risk={action['risk']:<6} {action['description']}"
+        )
+
+    print(f"\n{report['summary']}")
+
+
+def cmd_gaps(args, engine: SkillGenie) -> None:
+    """
+    Discover registry coverage gaps and novelty opportunities.
+    """
+
+    analysis = engine.analyze_gaps()
+
+    print(f"\n{analysis['summary']}\n")
+
+    for entry in analysis["low_coverage_categories"]:
+        print(
+            f"  [coverage] {entry['category']:<20} "
+            f"{entry['skills']} skill(s)"
+        )
+
+    for tool in analysis["tool_gaps"]:
+        print(f"  [tool-gap] {tool} used in traces but not covered")
+
+    for entry in analysis["novelty_opportunities"]:
+        print(
+            f"  [novelty] {entry['best_similarity']:.2f}  {entry['task']}"
+        )
+
+    for group in analysis["redundancy"]:
+        names = ", ".join(item["name"] for item in group["skills"])
+        print(f"  [redundant] {names}")
+
+
+def cmd_provenance(args, engine: SkillGenie) -> None:
+    """
+    Show a skill's lineage, attribution and explanation.
+    """
+
+    from uuid import UUID
+
+    dossier = engine.skill_provenance(UUID(args.skill_id))
+
+    print(
+        f"\n{dossier['skill_name']} (v{dossier['version']}, "
+        f"{dossier['status']})\n"
+    )
+
+    print(f"  {dossier['explainability']['narrative']}\n")
+
+    print("  Audit trail:")
+    for event in dossier["attribution"]["audit_events"]:
+        print(
+            f"    - {event['action']:<16} "
+            f"by {event['performed_by'] or 'unknown'}"
+        )
+
+    print("\n  JSON:")
+    print(json.dumps(dossier, indent=2, default=str))
+
+
+def cmd_arena(args, engine: SkillGenie) -> None:
+    """
+    SkillGenie Arena battles and rankings.
+    """
+
+    from uuid import UUID
+
+    if args.arena_command == "rank":
+        board = engine.arena_leaderboard()
+
+        if not board:
+            print("No battles recorded yet.")
+            return
+
+        print(f"\n{'RANK':<6} {'SKILL':<40} {'RATING':<10} {'BATTLES':<10}")
+        print("-" * 66)
+
+        for index, entry in enumerate(board, start=1):
+            print(
+                f"{index:<6} "
+                f"{entry['name'][:40]:<40} "
+                f"{entry['rating']:<10} "
+                f"{entry['battles']:<10}"
+            )
+        return
+
+    battle = engine.arena_battle(
+        task=args.task,
+        skill_a=UUID(args.skill_a),
+        skill_b=UUID(args.skill_b),
+        rounds=args.rounds,
+        failure_rate=args.fail_rate,
+    )
+
+    print(
+        f"\nBattle: {battle['task']}\n"
+        f"  Winner: {battle['winner'] or 'draw'}\n"
+    )
+
+    for contender in battle["contenders"]:
+        print(
+            f"  - {contender['agent']}\n"
+            f"      wins={contender['wins']} "
+            f"losses={contender['losses']} "
+            f"draws={contender['draws']}\n"
+            f"      success_rate={contender['success_rate']} "
+            f"efficiency={contender['efficiency']} "
+            f"resilience={contender['resilience']}\n"
+        )
+
+    print(json.dumps(battle["elo"], indent=2))
 
 
 def cmd_benchmark(args) -> None:
@@ -621,7 +905,14 @@ def main(argv: list[str] | None = None) -> None:
         "drift": cmd_drift,
         "failures": cmd_failures,
         "explain": cmd_explain,
+        "validate": cmd_validate,
         "export": cmd_export,
+        "plan": cmd_plan,
+        "plan-execute": cmd_plan_execute,
+        "remediate": cmd_remediate,
+        "gaps": cmd_gaps,
+        "provenance": cmd_provenance,
+        "arena": cmd_arena,
         "governance": cmd_governance,
     }
 

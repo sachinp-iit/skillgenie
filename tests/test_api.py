@@ -260,7 +260,15 @@ def test_skill_health_explanation(client, mock_engine):
 def test_export_skill(client, mock_engine):
     skill = make_capability()
 
-    mock_engine.store.get.return_value = skill
+    mock_engine.export_skill.return_value = {
+        "name": "web_researcher",
+        "description": skill.description,
+        "inputSchema": {"type": "object"},
+        "skillgenie": {
+            "skill_id": str(skill.id),
+            "version": skill.version,
+        },
+    }
 
     response = client.get(f"/api/v1/export/{skill.id}")
 
@@ -269,7 +277,7 @@ def test_export_skill(client, mock_engine):
     payload = response.json()
 
     assert "skillgenie" in payload
-    assert payload["name"] == skill.name.lower().replace(" ", "_")
+    assert payload["name"] == "web_researcher"
 
 
 def test_set_secret(client, mock_engine):
@@ -306,3 +314,84 @@ def test_monitor_governance(client, mock_engine):
 
     assert response.status_code == 200
     assert response.json()["data_residency"] == "self-hosted"
+
+
+def test_registry_gaps_endpoint(client, mock_engine):
+    mock_engine.analyze_gaps.return_value = {
+        "generated_at": "2026-01-01T00:00:00",
+        "total_skills": 1,
+        "category_coverage": {"research": 1},
+        "low_coverage_categories": [],
+        "tool_gaps": [],
+        "novelty_opportunities": [],
+        "redundancy": [],
+        "summary": "1 skill(s) in the registry.",
+    }
+
+    response = client.get("/api/v1/monitor/gaps")
+
+    assert response.status_code == 200
+    assert response.json()["total_skills"] == 1
+
+
+def test_provenance_endpoint(client, mock_engine):
+    from uuid import uuid4
+
+    mock_engine.skill_provenance.return_value = {
+        "skill_id": str(uuid4()),
+        "skill_name": "Web Researcher",
+        "version": "1.0.0",
+        "status": "PUBLISHED",
+        "origin": {"source_traces": []},
+        "lineage": {},
+        "attribution": {"audit_events": [], "outcomes": {}},
+        "explainability": {"narrative": "Test narrative."},
+    }
+
+    response = client.get(f"/api/v1/skills/{uuid4()}/provenance")
+
+    assert response.status_code == 200
+    assert response.json()["skill_name"] == "Web Researcher"
+
+
+def test_validate_skill_endpoint(client, mock_engine):
+    from uuid import uuid4
+
+    mock_engine.validate_skill.return_value = {
+        "skill_id": str(uuid4()),
+        "skill_name": "Web Researcher",
+        "verdict": "READY",
+        "readiness_score": 0.9,
+        "checks": [],
+        "actionable": [],
+    }
+
+    response = client.get(f"/api/v1/skills/{uuid4()}/validate")
+
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "READY"
+
+
+def test_remediate_skill_endpoint(client, mock_engine):
+    from uuid import uuid4
+
+    mock_engine.remediate.return_value = {
+        "skill_id": str(uuid4()),
+        "skill_name": "Drifting",
+        "state": "AT_RISK",
+        "health": "GOOD",
+        "drift": None,
+        "validation": {"verdict": "READY", "readiness_score": 0.9},
+        "actions": [],
+        "applied": ["flag_review"],
+        "summary": "1 action(s) applied.",
+    }
+
+    response = client.post(
+        f"/api/v1/skills/{uuid4()}/remediate",
+        json={"mode": "auto", "force": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "AT_RISK"
+    assert response.json()["applied"] == ["flag_review"]

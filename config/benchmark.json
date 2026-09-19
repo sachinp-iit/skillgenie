@@ -37,6 +37,16 @@
         "drift_threshold": 0.2,
         "drift_window_hours": 168
     },
+    "ranking": {
+        "mode": "hybrid",
+        "fit_weight": 0.5,
+        "bandit_weight": 0.2,
+        "recency_weight": 0.15,
+        "latency_weight": 0.15
+    },
+    "arena": {
+        "leaderboard_path": "arena.leaderboard.json"
+    },
     "mcp": {
         "enabled": true,
         "host": "127.0.0.1",

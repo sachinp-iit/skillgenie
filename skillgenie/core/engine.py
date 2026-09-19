@@ -136,6 +136,11 @@ class SkillGenie:
         self.scorer = SkillScorer(self.config)
         self.health_engine = SkillHealthEngine(self.config)
 
+        # Validation harness
+        from skillgenie.core.validator import SkillValidator
+
+        self.validator = SkillValidator(self.config)
+
         # Skill storage
         self.store = SkillStore(
             config=self.config,
@@ -179,6 +184,7 @@ class SkillGenie:
             store=self.store,
             recommendation_repository=self.recommendations,
             trace_repository=self.traces,
+            outcome_repository=self.outcomes,
         )
 
         self.evolution = SkillEvolutionEngine(
@@ -211,6 +217,57 @@ class SkillGenie:
             config=self.config,
             store=self.store,
             scorer=self.scorer,
+        )
+
+        from skillgenie.planning.composer import SkillComposer
+
+        self.composer = SkillComposer(
+            config=self.config,
+            store=self.store,
+            recommender=self.recommender,
+        )
+
+        # Autonomous drift remediation
+        from skillgenie.core.remediator import SkillRemediator
+
+        self.remediator = SkillRemediator(
+            config=self.config,
+            store=self.store,
+            feedback=self.feedback,
+            validator=self.validator,
+            lifecycle=self.lifecycle,
+            audit_repository=self.audit,
+        )
+
+        # Gap & novelty discovery
+        from skillgenie.core.gaps import SkillGapAnalyzer
+
+        self.gap_analyzer = SkillGapAnalyzer(
+            config=self.config,
+            store=self.store,
+            trace_repository=self.traces,
+        )
+
+        # Provenance & explainability
+        from skillgenie.core.provenance import SkillProvenance
+
+        self.provenance = SkillProvenance(
+            config=self.config,
+            store=self.store,
+            audit_repository=self.audit,
+            outcome_repository=self.outcomes,
+            trace_repository=self.traces,
+        )
+
+        # SkillGenie Arena
+        from skillgenie.arena import SkillGenieArena
+
+        self.arena = SkillGenieArena(
+            config=self.config,
+            leaderboard_path=self.config.get(
+                "arena.leaderboard_path",
+                "arena.leaderboard.json",
+            ),
         )
 
         self.logger.info("SkillGenie initialized successfully.")
@@ -339,6 +396,134 @@ class SkillGenie:
 
         return self.feedback.health_explanation(skill)
 
+    def validate_skill(self, skill_id: UUID) -> dict[str, Any]:
+        """
+        Validate a skill and return a readiness report.
+        """
+
+        skill = self.store.get(skill_id)
+
+        if skill is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_id}' does not exist."
+            )
+
+        return self.validator.validate(skill)
+
+    def remediate(
+        self,
+        skill_id: UUID,
+        mode: str = "auto",
+        force: bool = False,
+        actor: str = "system",
+    ) -> dict[str, Any]:
+        """
+        Assess a skill and apply autonomous remediation actions.
+        """
+
+        skill = self.store.get(skill_id)
+
+        if skill is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_id}' does not exist."
+            )
+
+        return self.remediator.remediate(
+            skill_id=skill_id,
+            mode=mode,
+            force=force,
+            actor=actor,
+        )
+
+    def analyze_gaps(self) -> dict[str, Any]:
+        """
+        Discover registry coverage gaps and novelty opportunities.
+        """
+
+        return self.gap_analyzer.analyze()
+
+    def export_skill(
+        self,
+        skill_id: UUID,
+        fmt: str = "mcp",
+        output_dir: str | None = None,
+    ) -> Any:
+        """
+        Export a skill in the requested format, optionally publishing it to a
+        marketplace catalog directory.
+        """
+
+        from skillgenie.marketplace import MarketplaceIndex, export_skill
+
+        skill = self.store.get(skill_id)
+
+        if skill is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_id}' does not exist."
+            )
+
+        if output_dir:
+            return MarketplaceIndex(output_dir).publish(skill, fmt=fmt)
+
+        return export_skill(skill, fmt)
+
+    def skill_provenance(self, skill_id: UUID) -> dict[str, Any]:
+        """
+        Provenance dossier and explainability narrative for a skill.
+        """
+
+        skill = self.store.get(skill_id)
+
+        if skill is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_id}' does not exist."
+            )
+
+        return self.provenance.provenance(skill_id)
+
+    def arena_battle(
+        self,
+        task: str,
+        skill_a: UUID,
+        skill_b: UUID,
+        rounds: int = 5,
+        failure_rate: float = 0.30,
+    ) -> dict[str, Any]:
+        """
+        Run a head-to-head skill battle in the arena.
+        """
+
+        skill_a_model = self.store.get(skill_a)
+        skill_b_model = self.store.get(skill_b)
+
+        if skill_a_model is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_a}' does not exist."
+            )
+
+        if skill_b_model is None:
+            raise CapabilityNotFoundError(
+                f"Skill '{skill_b}' does not exist."
+            )
+
+        return self.arena.battle(
+            skill_a=skill_a_model,
+            skill_b=skill_b_model,
+            task=task,
+            rounds=rounds,
+            failure_rate=failure_rate,
+        )
+
+    def arena_leaderboard(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Arena ELO leaderboard.
+        """
+
+        return self.arena.leaderboard(limit=limit)
+
     def governance_report(self) -> dict[str, Any]:
         """
         Governance and privacy compliance summary.
@@ -352,6 +537,66 @@ class SkillGenie:
         """
 
         return self.governance.redact(value)
+
+    def compose(
+        self,
+        task: str,
+        top_k: int = 3,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Compose a multi-skill plan for a composite task.
+        """
+
+        if not task or not task.strip():
+            raise ValueError("A non-empty task is required.")
+
+        plan = self.composer.compose(
+            task=task,
+            top_k=top_k,
+            status=status,
+        )
+
+        return plan.to_dict()
+
+    def execute_plan(
+        self,
+        task: str,
+        top_k: int = 3,
+        status: str | None = None,
+        learn: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Plan, execute and optionally learn a composite task.
+        """
+
+        plan = self.composer.compose(
+            task=task,
+            top_k=top_k,
+            status=status,
+        )
+
+        result = self.composer.execute(plan)
+
+        payload = {
+            "plan": plan.to_dict(),
+            "result": result.to_dict(),
+            "learned": None,
+        }
+
+        if learn:
+            composite = self.composer.learn(result)
+            payload["learned"] = (
+                {
+                    "id": str(composite.id),
+                    "name": composite.name,
+                    "status": composite.status.value,
+                }
+                if composite
+                else None
+            )
+
+        return payload
 
     def shutdown(self) -> None:
         """

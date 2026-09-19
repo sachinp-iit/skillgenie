@@ -50,6 +50,10 @@ def test_parser_provides_expected_commands():
         "health",
         "search",
         "api",
+        "validate",
+        "remediate",
+        "gaps",
+        "provenance",
     }
 
     assert expected <= available

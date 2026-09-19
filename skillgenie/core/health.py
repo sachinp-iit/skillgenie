@@ -103,7 +103,8 @@ class SkillHealthEngine:
             SkillHealth.CRITICAL,
         }
 
-    def _latency_score(self, avg_latency_ms: float) -> float:
+    @staticmethod
+    def _latency_score(avg_latency_ms: float) -> float:
         """
         Convert average latency into a 0-1 score. Lower is better.
         """

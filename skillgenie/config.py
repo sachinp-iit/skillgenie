@@ -59,6 +59,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "drift_threshold": 0.20,
         "drift_window_hours": 168,
     },
+    "ranking": {
+        "mode": "hybrid",
+        "fit_weight": 0.50,
+        "bandit_weight": 0.20,
+        "recency_weight": 0.15,
+        "latency_weight": 0.15,
+    },
+    "arena": {
+        "leaderboard_path": "arena.leaderboard.json",
+    },
     "mcp": {
         "enabled": True,
         "host": "127.0.0.1",
@@ -238,6 +248,30 @@ class Config:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    def set(self, key: str, value: Any) -> None:
+        """
+        Set a nested configuration value in memory.
+
+        Args:
+            key: Dotted key such as "ranking.mode".
+            value: New value.
+        """
+
+        parts = key.split(".")
+
+        target = self._config
+
+        for part in parts[:-1]:
+            child = target.get(part)
+
+            if not isinstance(child, dict):
+                child = {}
+                target[part] = child
+
+            target = child
+
+        target[parts[-1]] = value
 
     @property
     def config_file(self) -> Path:
